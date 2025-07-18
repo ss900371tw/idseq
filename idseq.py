@@ -373,24 +373,29 @@ def main():
         uploaded_files_dict = {}
 
         for label in mode_file_fields[mode]:
-            uploaded_file = st.file_uploader(
-                f"##### 📄 上傳：{label}",
-                type=["csv", "gz", "tar", "biom"],
-                key=f"uploader_{label}"
-            )
-            
+            file_key = f"uploaded_{label}"
+            uploader_key = f"uploader_{label}"
+        
+            st.markdown(f"##### 📄 上傳：{label}")
+            uploaded_file = st.file_uploader("選擇檔案", type=["csv", "gz", "tar", "biom"], key=uploader_key)
+        
             if uploaded_file is not None:
-                if f"uploaded_{label}" not in st.session_state:
-                    if check_filename_matches(label, uploaded_file.name):
-                        st.session_state[f"uploaded_{label}"] = uploaded_file
-                    else:
-                        st.error(f"❌ 檔案名稱「{uploaded_file.name}」與預期欄位「{label}」不符")
-            
-            # 顯示已成功的檔案
-            if f"uploaded_{label}" in st.session_state:
-                uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
-                st.success(f"✅ 已上傳：{st.session_state[f'uploaded_{label}'].name}")
-
+                # 只顯示目前選到的檔案，不立即處理
+                st.info(f"📁 檔案已選擇：{uploaded_file.name}")
+        
+                # 若檔名吻合，就讓使用者「點按確定」
+                if check_filename_matches(label, uploaded_file.name):
+                    if st.button(f"✅ 確認儲存 {label}", key=f"confirm_{label}"):
+                        st.session_state[file_key] = uploaded_file
+                        st.success(f"✅ 已儲存：{uploaded_file.name}")
+                        st.experimental_rerun()
+                else:
+                    st.error(f"❌ 檔案名稱「{uploaded_file.name}」與預期「{label}」不符")
+        
+            # 顯示已儲存的檔案（避免重複分析）
+            if file_key in st.session_state:
+                uploaded_files_dict[label] = st.session_state[file_key]
+                st.success(f"✅ 已上傳：{st.session_state[file_key].name}")
 
         if uploaded_files_dict:
             st.success(f"✅ 已上傳 {len(uploaded_files_dict)} 個檔案")
