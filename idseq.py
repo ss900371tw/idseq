@@ -24,23 +24,22 @@ PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
-
 def load_or_create_faiss():
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L6-v2")
+    EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
     if os.path.exists(INDEX_FILE_PATH):
-        return FAISS.load_local(INDEX_FILE_PATH, embeddings=embeddings, allow_dangerous_deserialization=True)
+        return FAISS.load_local(INDEX_FILE_PATH, embeddings=embedding, allow_dangerous_deserialization=True)
 
     loader = PyMuPDFLoader(PDF_PATH)
     docs = loader.load()
     splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     chunks = splitter.split_documents(docs)
     texts = [chunk.page_content for chunk in chunks]
-
-    vector_store = FAISS.from_texts(texts, embedding=embeddings)
+    vector_store = FAISS.from_texts(texts, embedding)
     vector_store.save_local(INDEX_FILE_PATH)
     return vector_store
-
+    
 # ✅ 初始化 Gemini
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY","")
