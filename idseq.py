@@ -396,7 +396,9 @@ def custom_csv_uploader_ui(label: str):
         try:
             encoded = st.session_state[key]
             file_data = base64.b64decode(encoded.split(",")[1])
-            return BytesIO(file_data)
+            uploaded_io = BytesIO(file_data)
+            uploaded_io.name = f"{label}.csv"  # ✅ 給它一個模擬檔名
+            return uploaded_io
         except Exception as e:
             st.error(f"❌ 解碼錯誤：{e}")
             return None
