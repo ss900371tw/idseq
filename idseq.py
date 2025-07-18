@@ -415,7 +415,25 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Gemini 分析失敗：{e}")
 
-            if st.checkbox("📊 顯示原始 CSV 摘要"):
+            if st.button("📊 重新顯示分析與原始 CSV 摘要"):
+                file_contents = preprocess_uploaded_files(uploaded_files_dict.values())
+                prompt = generate_llm_prompt(mode, file_contents)
+            
+                with st.spinner("Gemini 重新分析中..."):
+                    try:
+                        response = chat.send_message(prompt)
+                        st.subheader("📄 分析結果（重新）")
+                        st.markdown(f"""
+                        <div style="background-color:#f7f9fc;padding:1.2rem 1.5rem;border-radius:12px;
+                                    border-left:6px solid #1f77b4;margin-bottom:1rem;">
+                            <h4 style="margin-bottom:0.8rem;">📄 Gemini 分析結果</h4>
+                            <pre style="white-space:pre-wrap;font-size:0.92rem;font-family:inherit;">
+            {response.text}</pre></div>""", unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"❌ Gemini 分析失敗：{e}")
+            
+                # 顯示摘要
+                st.subheader("📊 原始 CSV 摘要")
                 for name, content in file_contents.items():
                     st.write(f"📄 {name}")
                     st.code(content, language="csv")
