@@ -27,7 +27,7 @@ def get_safe_embedding_model():
     return HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L6-v2")
 
 def load_or_create_faiss():
-    embeddings = get_safe_embedding_model()
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L6-v2")
 
     if os.path.exists(INDEX_FILE_PATH):
         return FAISS.load_local(INDEX_FILE_PATH, embeddings=embeddings, allow_dangerous_deserialization=True)
