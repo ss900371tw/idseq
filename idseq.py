@@ -383,7 +383,7 @@ def main():
             uploaded_file = st.file_uploader(
                 f"##### 📄 上傳：{label}",
                 type=["csv", "gz", "tar", "biom"],
-                key=f"uploader_{label}"
+                key=f"uploader_{mode}_{label}"
             )
             if uploaded_file is not None:
                 if check_filename_matches(label, uploaded_file.name):
