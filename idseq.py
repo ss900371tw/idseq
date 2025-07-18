@@ -354,9 +354,9 @@ def main():
 
     card_labels = list(TEMPLATE_MAP.keys())
     card_icons = ["🧬", "🧬", "🧬"]
-    card_descs = ["微生物基因組分析(說明：透過 IDSEQ 分析報告中的微生物分類結果（rPM、reads 數）、樣本來源、宿主基因表現、Contig 品質指標等資訊，判讀樣本中出現的病原體、常見菌或污染源。提供是否為臨床重要菌株、是否共感染、樣本是否具解讀意義等多面向分析。)",
-                  "病毒共識基因組比對(說明：分析病毒的全基因組或部分序列的比對結果，判斷是否為常見病毒、特殊變異株（如 VOC）、新興病原體。整合基因組覆蓋率、SNP 數量、相似度等品質指標，協助臨床決策與疫情監測。)", 
-                  "抗藥性基因風險分析(說明：解讀報告中偵測到的抗藥性基因（如 TEM、OXA、Erm）、其對應的抗生素類別，並依據國際分類判定是否為 MDR/XDR。指出高風險菌株、罕見抗藥性組合或交叉抗藥性，提供臨床與感染管制的決策參考。)"]
+    card_descs = ["微生物基因組分析",
+                  "病毒共識基因組比對", 
+                  "抗藥性基因風險分析"]
     cols = st.columns(len(card_labels))
     for i, (icon, label, desc) in enumerate(zip(card_icons, card_labels, card_descs)):
         with cols[i]:
