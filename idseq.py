@@ -403,10 +403,7 @@ def main():
                                 border-left:6px solid #1f77b4;margin-bottom:1rem;">
                         <h4 style="margin-bottom:0.8rem;">📄 Gemini 分析結果</h4>
                         <pre style="white-space:pre-wrap;font-size:0.92rem;font-family:inherit;">
-{response.text}
-                        </pre>
-                    </div>
-                    """, unsafe_allow_html=True)
+{response.text}</pre></div>""", unsafe_allow_html=True)
                 except Exception as e:
                     st.error(f"❌ Gemini 分析失敗：{e}")
 
