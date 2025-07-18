@@ -35,7 +35,8 @@ def load_or_create_faiss():
 
 # ✅ 初始化 Gemini
 load_dotenv()
-GOOGLE_API_KEY = 'AIzaSyBgMdKfVDl7MO-bE3IY2EnLc_1t7pWkoUw'
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY","")
+
 genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 chat = model.start_chat()
