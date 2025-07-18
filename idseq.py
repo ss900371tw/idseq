@@ -380,7 +380,6 @@ def main():
             )
             
             if uploaded_file is not None:
-                # 只在第一次上傳時儲存進 session_state，避免重複執行
                 if f"uploaded_{label}" not in st.session_state:
                     if check_filename_matches(label, uploaded_file.name):
                         st.session_state[f"uploaded_{label}"] = uploaded_file
