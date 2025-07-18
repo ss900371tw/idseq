@@ -21,15 +21,24 @@ from langchain_community.vectorstores import FAISS
 INDEX_FILE_PATH = "microbio_faiss_index"
 PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 2nd Edition ( PDFDrive ).pdf"
 
+from langchain_community.embeddings import HuggingFaceEmbeddings
+
+def get_safe_embedding_model():
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L6-v2")
+
 def load_or_create_faiss():
+    embeddings = get_safe_embedding_model()
+
     if os.path.exists(INDEX_FILE_PATH):
-        return FAISS.load_local(INDEX_FILE_PATH, embeddings = HuggingFaceEmbeddings(), allow_dangerous_deserialization=True)
+        return FAISS.load_local(INDEX_FILE_PATH, embeddings=embeddings, allow_dangerous_deserialization=True)
+
     loader = PyMuPDFLoader(PDF_PATH)
     docs = loader.load()
     splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     chunks = splitter.split_documents(docs)
     texts = [chunk.page_content for chunk in chunks]
-    vector_store = FAISS.from_texts(texts, HuggingFaceEmbeddings())
+
+    vector_store = FAISS.from_texts(texts, embedding=embeddings)
     vector_store.save_local(INDEX_FILE_PATH)
     return vector_store
 
