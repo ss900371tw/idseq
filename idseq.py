@@ -373,9 +373,8 @@ def main():
         uploaded_files_dict = {}
 
         for label in mode_file_fields[mode]:
-            st.markdown(f"##### 📄 上傳：{label}")
             uploaded_file = st.file_uploader(
-                f"📄 上傳：{label}",
+                f"##### 📄 上傳：{label}",
                 type=["csv", "gz", "tar", "biom"],
                 key=f"uploader_{label}"
             )
