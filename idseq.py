@@ -392,9 +392,7 @@ def main():
             if f"uploaded_{label}" in st.session_state:
                 uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
                 st.success(f"✅ 已上傳：{st.session_state[f'uploaded_{label}'].name}")
-            if f"uploaded_{label}" in st.session_state:
-                uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
-                st.success(f"✅ 已上傳 {st.session_state[f'uploaded_{label}'].name}")
+
 
         if uploaded_files_dict:
             st.success(f"✅ 已上傳 {len(uploaded_files_dict)} 個檔案")
