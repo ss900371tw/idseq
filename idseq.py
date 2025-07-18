@@ -335,25 +335,24 @@ def render_mode_card(icon, title, desc, key):
 
 
 
-
 def custom_csv_uploader_ui(label: str):
     key = f"uploaded_csv_base64_{label.replace(' ', '_')}"
     st.markdown(f"<div class='csv-uploader-label'>📄 上傳：{label}</div>", unsafe_allow_html=True)
 
-    # 客製化 HTML 上傳元件
+    # 客製化樣式與上傳 HTML 元件
     st.write(
         f"""
         <style>
             .csv-uploader-container {{
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    background-color: #f0f0f0;
-    padding: 15px 20px;
-    border-radius: 5px;
-    margin-bottom: 20px;
-    max-width: 480px;  /* ✅ 加入最大寬度限制 */
-}}
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                background-color: #f0f0f0;
+                padding: 15px 20px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+                max-width: 480px;
+            }}
             .csv-uploader-label {{
                 font-weight: bold;
                 font-size: 16px;
@@ -367,7 +366,7 @@ def custom_csv_uploader_ui(label: str):
         unsafe_allow_html=True
     )
 
-    # 插入 HTML 元件（注意 input 的 ID 要根據 label 動態變化）
+    # 插入動態 HTML（用 label 做唯一 ID）
     st.markdown(f"""
     <div class="csv-uploader-container">
         <input type="file" accept=".csv,.gz,.tar,.biom" id="csv-uploader-{key}" class="csv-uploader" />
@@ -392,18 +391,18 @@ def custom_csv_uploader_ui(label: str):
     </script>
     """, unsafe_allow_html=True)
 
+    # 處理 base64 上傳的內容
     if key in st.session_state:
         try:
             encoded = st.session_state[key]
             file_data = base64.b64decode(encoded.split(",")[1])
             uploaded_io = BytesIO(file_data)
-            uploaded_io.name = f"{label}.csv"  # ✅ 給它一個模擬檔名
+            uploaded_io.name = f"{label}.csv"  # ✅ 模擬檔案名稱
             return uploaded_io
         except Exception as e:
             st.error(f"❌ 解碼錯誤：{e}")
             return None
     return None
-
 
 
 
