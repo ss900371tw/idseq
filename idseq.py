@@ -373,7 +373,7 @@ def main():
             ]
         }
 
-        st.markdown("## 📂 上傳 CSV / tar / gz / biom 檔案")
+        st.markdown("## 📂 上傳檔案")
 
         for label in mode_file_fields[mode]:
             uploaded_file = st.file_uploader(
@@ -386,9 +386,6 @@ def main():
                     st.session_state.uploaded_files_dict[label] = uploaded_file
                 else:
                     st.error(f"❌ 檔案名稱「{uploaded_file.name}」與預期欄位「{label}」不符")
-
-            if label in st.session_state.uploaded_files_dict:
-                st.success(f"✅ 已上傳：{st.session_state.uploaded_files_dict[label].name}")
 
         if st.session_state.uploaded_files_dict:
             st.success(f"✅ 已上傳 {len(st.session_state.uploaded_files_dict)} 個檔案")
