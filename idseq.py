@@ -23,8 +23,7 @@ PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-def get_safe_embedding_model():
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L6-v2")
+
 
 def load_or_create_faiss():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-MiniLM-L6-v2")
