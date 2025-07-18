@@ -265,6 +265,7 @@ def render_mode_card(icon, title, desc, key):
         if st.button("選擇", key=f"{key}_btn"):
             st.session_state.selected_mode = title  # ❗不用 rerun()
         st.markdown("</div></div>", unsafe_allow_html=True)
+
             
 def select_mode(title):
     st.session_state.selected_mode = title
@@ -328,6 +329,8 @@ def render_mode_card(icon, title, desc, key):
         pass
 
     st.markdown("</div></div>", unsafe_allow_html=True)
+
+
 
 def main():
     st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
