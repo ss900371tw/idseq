@@ -268,6 +268,9 @@ def render_mode_card(icon, title, desc, key):
 
             
 def select_mode(title):
+    # 若切換主題，重置已上傳檔案
+    if st.session_state.get("selected_mode") != title:
+        st.session_state.uploaded_files_dict = {}
     st.session_state.selected_mode = title
 
 def render_mode_card(icon, title, desc, key):
@@ -338,6 +341,7 @@ def main():
 
     if "selected_mode" not in st.session_state:
         st.session_state.selected_mode = None
+    
     if "uploaded_files_dict" not in st.session_state:
         st.session_state.uploaded_files_dict = {}
 
