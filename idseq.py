@@ -374,13 +374,24 @@ def main():
 
         for label in mode_file_fields[mode]:
             st.markdown(f"##### 📄 上傳：{label}")
-            if f"uploaded_{label}" not in st.session_state:
-                file = st.file_uploader(f"選擇檔案", type=["csv", "gz", "tar", "biom"], key=f"uploader_{label}")
-                if file:
-                    if not check_filename_matches(label, file.name):
-                        st.error(f"❌ 檔案名稱「{file.name}」與預期欄位「{label}」不符")
+            uploaded_file = st.file_uploader(
+                f"📄 上傳：{label}",
+                type=["csv", "gz", "tar", "biom"],
+                key=f"uploader_{label}"
+            )
+            
+            if uploaded_file is not None:
+                # 只在第一次上傳時儲存進 session_state，避免重複執行
+                if f"uploaded_{label}" not in st.session_state:
+                    if check_filename_matches(label, uploaded_file.name):
+                        st.session_state[f"uploaded_{label}"] = uploaded_file
                     else:
-                        st.session_state[f"uploaded_{label}"] = file
+                        st.error(f"❌ 檔案名稱「{uploaded_file.name}」與預期欄位「{label}」不符")
+            
+            # 顯示已成功的檔案
+            if f"uploaded_{label}" in st.session_state:
+                uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
+                st.success(f"✅ 已上傳：{st.session_state[f'uploaded_{label}'].name}")
             if f"uploaded_{label}" in st.session_state:
                 uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
                 st.success(f"✅ 已上傳 {st.session_state[f'uploaded_{label}'].name}")
