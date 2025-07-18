@@ -335,6 +335,78 @@ def render_mode_card(icon, title, desc, key):
 
 
 
+
+def custom_csv_uploader_ui(label: str):
+    key = f"uploaded_csv_base64_{label.replace(' ', '_')}"
+    st.markdown(f"<div class='csv-uploader-label'>📄 上傳：{label}</div>", unsafe_allow_html=True)
+
+    # 客製化 HTML 上傳元件
+    st.write(
+        f"""
+        <style>
+            .csv-uploader-container {{
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    background-color: #f0f0f0;
+    padding: 15px 20px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    max-width: 480px;  /* ✅ 加入最大寬度限制 */
+}}
+            .csv-uploader-label {{
+                font-weight: bold;
+                font-size: 16px;
+                margin-bottom: 10px;
+            }}
+            .csv-uploader {{
+                cursor: pointer;
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # 插入 HTML 元件（注意 input 的 ID 要根據 label 動態變化）
+    st.markdown(f"""
+    <div class="csv-uploader-container">
+        <input type="file" accept=".csv,.gz,.tar,.biom" id="csv-uploader-{key}" class="csv-uploader" />
+    </div>
+    <script>
+        const uploader = document.getElementById("csv-uploader-{key}");
+        uploader.addEventListener("change", (event) => {{
+            const file = event.target.files[0];
+            if (file) {{
+                const reader = new FileReader();
+                reader.onload = (e) => {{
+                    window.parent.postMessage({{
+                        type: "setSessionState",
+                        key: "{key}",
+                        value: e.target.result
+                    }}, "*");
+                    window.parent.postMessage({{ type: "rerunScript" }}, "*");
+                }};
+                reader.readAsDataURL(file);
+            }}
+        }});
+    </script>
+    """, unsafe_allow_html=True)
+
+    if key in st.session_state:
+        try:
+            encoded = st.session_state[key]
+            file_data = base64.b64decode(encoded.split(",")[1])
+            return BytesIO(file_data)
+        except Exception as e:
+            st.error(f"❌ 解碼錯誤：{e}")
+            return None
+    return None
+
+
+
+
+
+
 def main():
     st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
     st.title("🧬 Gemini IDSEQ 分析儀表板")
@@ -380,11 +452,8 @@ def main():
         st.markdown("## 📂 上傳檔案")
 
         for label in mode_file_fields[mode]:
-            uploaded_file = st.file_uploader(
-                f"##### 📄 上傳：{label}",
-                type=["csv", "gz", "tar", "biom"],
-                key=f"uploader_{mode}_{label}"
-            )
+            uploaded_file = custom_csv_uploader_ui(label)
+
             if uploaded_file is not None:
                 if check_filename_matches(label, uploaded_file.name):
                     st.session_state.uploaded_files_dict[label] = uploaded_file
