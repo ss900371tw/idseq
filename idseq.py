@@ -372,14 +372,18 @@ def main():
 
         uploaded_files_dict = {}
 
-        st.markdown("### 📂 請分別上傳以下分類的檔案")
         for label in mode_file_fields[mode]:
-            file = st.file_uploader(f"📄 上傳：{label}", type=["csv", "gz", "tar", "biom"], key=label)
-            if file:
-                if not check_filename_matches(label, file.name):
-                    st.error(f"❌ 檔案名稱「{file.name}」與預期欄位「{label}」不符")
-                else:
-                    uploaded_files_dict[label] = file
+            st.markdown(f"##### 📄 上傳：{label}")
+            if f"uploaded_{label}" not in st.session_state:
+                file = st.file_uploader(f"選擇檔案", type=["csv", "gz", "tar", "biom"], key=f"uploader_{label}")
+                if file:
+                    if not check_filename_matches(label, file.name):
+                        st.error(f"❌ 檔案名稱「{file.name}」與預期欄位「{label}」不符")
+                    else:
+                        st.session_state[f"uploaded_{label}"] = file
+            if f"uploaded_{label}" in st.session_state:
+                uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
+                st.success(f"✅ 已上傳 {st.session_state[f'uploaded_{label}'].name}")
 
         if uploaded_files_dict:
             st.success(f"✅ 已上傳 {len(uploaded_files_dict)} 個檔案")
