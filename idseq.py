@@ -25,8 +25,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
 def load_or_create_faiss():
-    EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    embedding = HuggingFaceEmbeddings()
 
     if os.path.exists(INDEX_FILE_PATH):
         return FAISS.load_local(INDEX_FILE_PATH, embeddings=embedding, allow_dangerous_deserialization=True)
