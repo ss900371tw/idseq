@@ -419,7 +419,7 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Gemini 分析失敗：{e}")
 
-            if st.button("📊 重新顯示分析與原始 CSV 摘要"):
+            if st.button("📊 清空分析結果"):
                 file_contents = preprocess_uploaded_files(uploaded_files_dict.values())
                 prompt = generate_llm_prompt(mode, file_contents)
             
