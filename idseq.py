@@ -330,29 +330,29 @@ def render_mode_card(icon, title, desc, key):
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 def main():
+    st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
     st.title("🧬 Gemini IDSEQ 分析儀表板")
 
     if "selected_mode" not in st.session_state:
         st.session_state.selected_mode = None
-    
+    if "uploaded_files_dict" not in st.session_state:
+        st.session_state.uploaded_files_dict = {}
+
     st.markdown("""
     <div class="banner-text" style="background-color:#219ebc;color:white;text-align:center;
         padding:10px;border-radius:6px;margin:10px 0;font-weight:bold;font-size:16px;">
     請選擇分析主題
     </div>
     """, unsafe_allow_html=True)
-    
+
     card_labels = list(TEMPLATE_MAP.keys())
     card_icons = ["🧬", "🧬", "🧬"]
     card_descs = ["微生物基因組分析", "病毒共識基因組比對", "抗藥性基因風險分析"]
-    
     cols = st.columns(len(card_labels))
     for i, (icon, label, desc) in enumerate(zip(card_icons, card_labels, card_descs)):
         with cols[i]:
             render_mode_card(icon, label, desc, key=f"mode_{i}")
 
-
-    # ===== 主流程（依主題呈現對應的上傳欄位） =====
     if st.session_state.selected_mode:
         mode = st.session_state.selected_mode
 
@@ -370,7 +370,7 @@ def main():
             ]
         }
 
-        uploaded_files_dict = {}
+        st.markdown("## 📂 上傳 CSV / tar / gz / biom 檔案")
 
         for label in mode_file_fields[mode]:
             uploaded_file = st.file_uploader(
@@ -378,27 +378,23 @@ def main():
                 type=["csv", "gz", "tar", "biom"],
                 key=f"uploader_{label}"
             )
-            
             if uploaded_file is not None:
-                # 只在第一次上傳時儲存進 session_state，避免重複執行
-                if f"uploaded_{label}" not in st.session_state:
-                    if check_filename_matches(label, uploaded_file.name):
-                        st.session_state[f"uploaded_{label}"] = uploaded_file
-                    else:
-                        st.error(f"❌ 檔案名稱「{uploaded_file.name}」與預期欄位「{label}」不符")
-            
-            # 顯示已成功的檔案
-            if f"uploaded_{label}" in st.session_state:
-                uploaded_files_dict[label] = st.session_state[f"uploaded_{label}"]
-                st.success(f"✅ 已上傳：{st.session_state[f'uploaded_{label}'].name}")
+                if check_filename_matches(label, uploaded_file.name):
+                    st.session_state.uploaded_files_dict[label] = uploaded_file
+                else:
+                    st.error(f"❌ 檔案名稱「{uploaded_file.name}」與預期欄位「{label}」不符")
 
+            if label in st.session_state.uploaded_files_dict:
+                st.success(f"✅ 已上傳：{st.session_state.uploaded_files_dict[label].name}")
 
-        if uploaded_files_dict:
-            st.success(f"✅ 已上傳 {len(uploaded_files_dict)} 個檔案")
-            for name in uploaded_files_dict:
+        if st.session_state.uploaded_files_dict:
+            st.success(f"✅ 已上傳 {len(st.session_state.uploaded_files_dict)} 個檔案")
+            for name in st.session_state.uploaded_files_dict:
                 st.write(f"- {name}")
 
+        # ✅ 按下按鈕才進行 Gemini 分析
         if st.button("🚀 Gemini + RAG 開始分析"):
+            uploaded_files_dict = st.session_state.uploaded_files_dict
             if not uploaded_files_dict:
                 st.warning("請上傳檔案")
                 return
@@ -423,6 +419,6 @@ def main():
                 for name, content in file_contents.items():
                     st.write(f"📄 {name}")
                     st.code(content, language="csv")
-
+                    
 if __name__ == "__main__":
     main()
