@@ -27,10 +27,7 @@ PDF_PATH = "C:\\Users\\User\\Downloads\\ilovepdf_merged.pdf"
 
 def load_or_create_faiss():
     if os.path.exists(INDEX_FILE_PATH):
-        return FAISS.load_local(INDEX_FILE_PATH, embeddings=HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={"device": "cpu"}
-), allow_dangerous_deserialization=True)
+        return FAISS.load_local(INDEX_FILE_PATH, embeddings=HuggingFaceEmbeddings(), allow_dangerous_deserialization=True)
     loader = PyMuPDFLoader(PDF_PATH)
     docs = loader.load()
     splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
