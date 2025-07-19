@@ -46,7 +46,7 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 chat = model.start_chat()
 
 # ✅ FAISS 載入
-vector_store = load_or_create_faiss(INDEX_FILE_PATH)
+vector_store = load_or_create_faiss()
 
 
 # ✅ Prompt 模板與 UI 請見原始程式碼（不重複列出）
