@@ -26,6 +26,8 @@ INDEX_FILE_PATH3 = "microbio_faiss_index3"
 INDEX_FILE_PATH4 = "microbio_faiss_index4"
 INDEX_FILE_PATH5 = "microbio_faiss_index5"
 INDEX_FILE_PATH6 = "microbio_faiss_index6"
+INDEX_FILE_PATH7 = "microbio_faiss_index7"
+INDEX_FILE_PATH8 = "microbio_faiss_index8"
 
 PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 2nd Edition ( PDFDrive ).pdf"
 
@@ -64,6 +66,8 @@ vector_store3 = load_or_create_faiss(INDEX_FILE_PATH3)
 vector_store4 = load_or_create_faiss(INDEX_FILE_PATH4)
 vector_store5 = load_or_create_faiss(INDEX_FILE_PATH5)
 vector_store6 = load_or_create_faiss(INDEX_FILE_PATH6)
+vector_store7 = load_or_create_faiss(INDEX_FILE_PATH7)
+vector_store8 = load_or_create_faiss(INDEX_FILE_PATH8)
 
 # ✅ Prompt 模板與 UI 請見原始程式碼（不重複列出）
 # ⚠️ 若要使用 RAG，需要插入一個 Retrieval 函數如下：
@@ -74,7 +78,8 @@ def retrieve_context(query: str, k: int = 5):
     # 將所有 vector store 放進一個列表中
     vector_stores = [
         vector_store,vector_store0,vector_store1, vector_store2,
-        vector_store3, vector_store4, vector_store5, vector_store6
+        vector_store3, vector_store4, vector_store5, vector_store6, 
+        vector_store7, vector_store8
     ]
 
     all_results = []
