@@ -19,6 +19,14 @@ from langchain_community.vectorstores import FAISS
 
 # ---------- RAG 設定 ----------
 INDEX_FILE_PATH = "microbio_faiss_index"
+INDEX_FILE_PATH0 = "microbio_faiss_index0"
+INDEX_FILE_PATH1 = "microbio_faiss_index1"
+INDEX_FILE_PATH2 = "microbio_faiss_index2"
+INDEX_FILE_PATH3 = "microbio_faiss_index3"
+INDEX_FILE_PATH4 = "microbio_faiss_index4"
+INDEX_FILE_PATH5 = "microbio_faiss_index5"
+INDEX_FILE_PATH6 = "microbio_faiss_index6"
+
 PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 2nd Edition ( PDFDrive ).pdf"
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -48,15 +56,44 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 chat = model.start_chat()
 
 # ✅ FAISS 載入
-vector_store = load_or_create_faiss()
+vector_store = load_or_create_faiss(INDEX_FILE_PATH)
+vector_store0 = load_or_create_faiss(INDEX_FILE_PATH0)
+vector_store1 = load_or_create_faiss(INDEX_FILE_PATH1)
+vector_store2 = load_or_create_faiss(INDEX_FILE_PATH2)
+vector_store3 = load_or_create_faiss(INDEX_FILE_PATH3)
+vector_store4 = load_or_create_faiss(INDEX_FILE_PATH4)
+vector_store5 = load_or_create_faiss(INDEX_FILE_PATH5)
+vector_store6 = load_or_create_faiss(INDEX_FILE_PATH6)
 
 # ✅ Prompt 模板與 UI 請見原始程式碼（不重複列出）
 # ⚠️ 若要使用 RAG，需要插入一個 Retrieval 函數如下：
 
+
+
 def retrieve_context(query: str, k: int = 5):
-    results = vector_store.similarity_search(query, k=k)
-    context_texts = [doc.page_content for doc in results]
-    return "\n\n".join(context_texts)
+    # 將所有 vector store 放進一個列表中
+    vector_stores = [
+        vector_store,vector_store0,vector_store1, vector_store2,
+        vector_store3, vector_store4, vector_store5, vector_store6
+    ]
+
+    all_results = []
+
+    # 對每個 store 執行 similarity_search
+    for store in vector_stores:
+        try:
+            results = store.similarity_search(query, k=k)
+            all_results.extend(results)
+        except Exception as e:
+            print(f"⚠️ 查詢失敗於某個向量庫: {e}")
+
+    # 按照 score 排序並取前 k 筆（需確保結果有 .score 欄位）
+    unique_results = {r.page_content: r for r in all_results}.values()
+    sorted_results = sorted(unique_results, key=lambda x: getattr(x, "score", 0), reverse=True)
+
+    top_k_results = sorted_results[:k]
+    return "\n\n".join([r.page_content for r in top_k_results])
+
 
 
 def generate_llm_prompt(mode, file_contents):
