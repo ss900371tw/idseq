@@ -32,7 +32,7 @@ PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
-def load_or_create_faiss():
+def load_or_create_faiss(INDEX_FILE_PATH):
     embedding = HuggingFaceEmbeddings()
 
     if os.path.exists(INDEX_FILE_PATH):
