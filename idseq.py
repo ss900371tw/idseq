@@ -18,16 +18,12 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
 # ---------- RAG 設定 ----------
-INDEX_FILE_PATH = "microbio_faiss_index"
-
-
-PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 2nd Edition ( PDFDrive ).pdf"
 
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
 INDEX_FILE_PATH = "microbio_faiss_index"
-PDF_PATH = "C:\\Users\\User\\Downloads\\Microbiology and Immunology Textbook of 2nd Edition ( PDFDrive ).pdf"
+PDF_PATH = "C:\\Users\\User\\Downloads\\ilovepdf_merged.pdf"
 
 def load_or_create_faiss():
     if os.path.exists(INDEX_FILE_PATH):
