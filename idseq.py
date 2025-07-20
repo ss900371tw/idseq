@@ -22,20 +22,49 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
-INDEX_FILE_PATH = "microbio_faiss_index"
+INDEX_FILE_PATH = "microbio_faiss_index.zip"
 PDF_PATH = "C:\\Users\\User\\Downloads\\ilovepdf_merged.pdf"
 
+
+def extract_index_archive(archive_path, extract_to="temp_faiss_index"):
+    if archive_path.endswith(".zip"):
+        with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_to)
+    elif archive_path.endswith((".tar.gz", ".tgz")):
+        with tarfile.open(archive_path, 'r:gz') as tar_ref:
+            tar_ref.extractall(extract_to)
+    return extract_to
+
+def find_faiss_index_folder(base_path):
+    for root, dirs, files in os.walk(base_path):
+        if "index.faiss" in files and "index.pkl" in files:
+            return root
+    return None
+
 def load_or_create_faiss():
-    if os.path.exists(INDEX_FILE_PATH):
-        return FAISS.load_local(INDEX_FILE_PATH, embeddings=HuggingFaceEmbeddings(), allow_dangerous_deserialization=True)
-    loader = PyMuPDFLoader(PDF_PATH)
-    docs = loader.load()
-    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-    chunks = splitter.split_documents(docs)
-    texts = [chunk.page_content for chunk in chunks]
-    vector_store = FAISS.from_texts(texts, HuggingFaceEmbeddings())
-    vector_store.save_local(INDEX_FILE_PATH)
-    return vector_store
+    embedding = HuggingFaceEmbeddings()
+
+    if INDEX_FILE_PATH.endswith((".zip", ".tar.gz", ".tgz")):
+        extracted_dir = extract_index_archive(INDEX_FILE_PATH)
+        index_dir = find_faiss_index_folder(extracted_dir)
+    else:
+        index_dir = INDEX_FILE_PATH
+
+    if index_dir and os.path.exists(os.path.join(index_dir, "index.faiss")):
+        return FAISS.load_local(index_dir, embeddings=embedding, allow_dangerous_deserialization=True)
+    else:
+        if not os.path.exists(PDF_PATH):
+            raise FileNotFoundError(f"找不到 PDF：{PDF_PATH}")
+
+        loader = PyMuPDFLoader(PDF_PATH)
+        docs = loader.load()
+        splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        chunks = splitter.split_documents(docs)
+        texts = [chunk.page_content for chunk in chunks]
+        vector_store = FAISS.from_texts(texts, embedding)
+        vector_store.save_local(index_dir)
+        return vector_store
+
     
 # ✅ 初始化 Gemini
 load_dotenv()
