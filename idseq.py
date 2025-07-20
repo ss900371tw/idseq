@@ -235,14 +235,14 @@ def preprocess_uploaded_files(files):
                             if member.isfile() and member.name.endswith(".csv"):
                                 csv_path = os.path.join(tmpdir, member.name)
                                 df = pd.read_csv(csv_path)
-                                contents[member.name] = df.head(20).to_csv(index=False)
+                                contents[member.name] = df.to_csv(index=False)
 
             elif filename.endswith(".gz"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                     with gzip.open(file, "rb") as gz_file:
                         shutil.copyfileobj(gz_file, tmp_csv)
                     df = pd.read_csv(tmp_csv.name)
-                    contents[filename[:-3]] = df.head(20).to_csv(index=False)
+                    contents[filename[:-3]] = df.to_csv(index=False)
 
             elif filename.endswith(".biom"):
                 biom_bytes = BytesIO(file.read())  # 將上傳的檔案轉為 in-memory stream
@@ -252,7 +252,7 @@ def preprocess_uploaded_files(files):
                     index=table.ids(axis='observation'),
                     columns=table.ids(axis='sample')
                 )
-                contents[filename] = df.head(20).to_csv(index=True)
+                contents[filename] = df.to_csv(index=True)
 
             else:
                 df = pd.read_csv(file)
