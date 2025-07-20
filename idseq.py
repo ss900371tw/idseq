@@ -256,7 +256,7 @@ def preprocess_uploaded_files(files):
 
             else:
                 df = pd.read_csv(file)
-                contents[filename] = df.head(20).to_csv(index=False)
+                contents[filename] = df.to_csv(index=False)
 
         except Exception as e:
             contents[filename] = f"❌ 處理失敗: {e}"
