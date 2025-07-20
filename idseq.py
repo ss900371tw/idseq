@@ -435,6 +435,12 @@ def main():
     if st.session_state.selected_mode:
         mode = st.session_state.selected_mode
 
+        existing_keys = list(st.session_state.uploaded_files_dict.keys())
+        for label in existing_keys:
+            key = f"uploader_{mode}_{label}"
+            if st.session_state.get(key) is None:
+                del st.session_state.uploaded_files_dict[label]
+
         mode_file_fields = {
             "Metagenomics": [
                 "Heatmap", "Sample Metadata", "Samples Overview",
