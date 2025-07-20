@@ -1,6 +1,8 @@
 # ✅ 整合 FAISS RAG 到現有 app.py
 import streamlit as st
 import os 
+import zipfile
+import tarfile
 from dotenv import load_dotenv
 import pandas as pd
 import google.generativeai as genai
