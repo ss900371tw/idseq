@@ -24,7 +24,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
-INDEX_FILE_PATH = "microbio_faiss_index.zip"
+INDEX_FILE_PATH = "microbio_faiss_index1.zip"
 PDF_PATH = "C:\\Users\\User\\Downloads\\ilovepdf_merged.pdf"
 
 
