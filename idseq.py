@@ -248,7 +248,7 @@ def preprocess_uploaded_files(files):
                             if member.isfile() and member.name.endswith(".csv"):
                                 csv_path = os.path.join(tmpdir, member.name)
                                 df = pd.read_csv(csv_path)
-                                contents[member.name] = df.to_csv(index=False)
+                                contents[member.name] = df.head(20).to_csv(index=False)
 
             elif filename.endswith(".zip"):
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -261,14 +261,14 @@ def preprocess_uploaded_files(files):
                             member_path = os.path.join(tmpdir, member)
                             if os.path.isfile(member_path) and member.endswith(".csv"):
                                 df = pd.read_csv(member_path)
-                                contents[member] = df.to_csv(index=False)
+                                contents[member] = df.head(20).to_csv(index=False)
 
             elif filename.endswith(".gz"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                     with gzip.open(file, "rb") as gz_file:
                         shutil.copyfileobj(gz_file, tmp_csv)
                     df = pd.read_csv(tmp_csv.name)
-                    contents[filename[:-3]] = df.to_csv(index=False)
+                    contents[filename[:-3]] = df.head(20).to_csv(index=False)
 
             elif filename.endswith(".biom"):
                 biom_bytes = BytesIO(file.read())
