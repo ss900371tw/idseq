@@ -101,7 +101,6 @@ def generate_llm_prompt(mode, file_contents):
         "Contig Summary Reports": "Contig 的 QC 統計與覆蓋率。",
         "Host Genes Count": "宿主轉錄表現統計。",
         "Combined Microbiome File": "樣本與微生物分類合併成 BIOM 格式。",
-        "Consensus Genome": "下載多個共識基因組，可選擇分開或合併為單一檔案。",
         "Consensus Genome Overview": "共識基因組的品質控制（QC）指標（例如：基因組覆蓋率百分比、比對到的讀數、SNP 數量）及其他統計摘要",
         "Intermediate Output Files": "中間產出的分析文件，包括 BAM 對齊檔案、覆蓋率圖、QUAST 報告等內容。",
         "Antimicrobial Assistance Results": "包含抗藥性報告、完整的抗藥性指標、中間分析結果及 CARD RGI 工具的輸出。",
