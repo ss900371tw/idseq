@@ -237,7 +237,7 @@ def preprocess_uploaded_files(files):
     for file in files:
         filename = file.name
         try:
-            if filename.endswith(".tar") or filename.endswith(".tar.gz"):
+            if filename.endswith(".tar") or filename.endswith(".tar.gz") or filename.endswith(".zip"):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tar_path = os.path.join(tmpdir, filename)
                     with open(tar_path, "wb") as f:
@@ -250,7 +250,7 @@ def preprocess_uploaded_files(files):
                                 df = pd.read_csv(csv_path)
                                 contents[member.name] = df.to_csv(index=False)
 
-            elif filename.endswith(".gz") or filename.endswith(".zip"):
+            elif filename.endswith(".gz") :
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                     with gzip.open(file, "rb") as gz_file:
                         shutil.copyfileobj(gz_file, tmp_csv)
