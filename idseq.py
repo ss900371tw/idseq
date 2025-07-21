@@ -460,7 +460,7 @@ def main():
         for label in mode_file_fields[mode]:
             uploaded_file = st.file_uploader(
                 f"##### 📄 上傳：{label}",
-                type=["csv", "gz", "tar", "biom"],
+                type=["csv", "gz", "tar", "biom", "zip"],
                 key=f"uploader_{mode}_{label}"
             )
             if uploaded_file is not None:
