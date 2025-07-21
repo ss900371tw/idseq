@@ -250,7 +250,7 @@ def preprocess_uploaded_files(files):
                                 df = pd.read_csv(csv_path)
                                 contents[member.name] = df.to_csv(index=False)
 
-            elif filename.endswith(".gz"):
+            elif filename.endswith(".gz") or filename.endswith(".zip"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                     with gzip.open(file, "rb") as gz_file:
                         shutil.copyfileobj(gz_file, tmp_csv)
