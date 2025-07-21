@@ -244,11 +244,14 @@ def preprocess_uploaded_files(files):
                         f.write(file.read())
                     with tarfile.open(tar_path, "r:*") as tar:
                         tar.extractall(path=tmpdir)
-                        for member in tar.getmembers():
-                            if member.isfile() and member.name.endswith(".csv"):
-                                csv_path = os.path.join(tmpdir, member.name)
-                                df = pd.read_csv(csv_path)
-                                contents[member.name] = df.head(20).to_csv(index=False)
+                        csv_files = [m for m in tar.getmembers() if m.isfile() and m.name.endswith(".csv")]
+                        for member in csv_files:
+                            csv_path = os.path.join(tmpdir, member.name)
+                            df = pd.read_csv(csv_path)
+                            if len(csv_files) > 1:
+                                contents[member.name] = df.head(20).to_csv(index=True)
+                            else:
+                                contents[member.name] = df.to_csv(index=False)
 
             elif filename.endswith(".zip"):
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -257,18 +260,22 @@ def preprocess_uploaded_files(files):
                         f.write(file.read())
                     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                         zip_ref.extractall(tmpdir)
-                        for member in zip_ref.namelist():
+                        csv_members = [m for m in zip_ref.namelist() if m.endswith(".csv")]
+                        for member in csv_members:
                             member_path = os.path.join(tmpdir, member)
-                            if os.path.isfile(member_path) and member.endswith(".csv"):
+                            if os.path.isfile(member_path):
                                 df = pd.read_csv(member_path)
-                                contents[member] = df.head(20).to_csv(index=False)
+                                if len(csv_members) > 1:
+                                    contents[member] = df.head(20).to_csv(index=True)
+                                else:
+                                    contents[member] = df.to_csv(index=False)
 
             elif filename.endswith(".gz"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                     with gzip.open(file, "rb") as gz_file:
                         shutil.copyfileobj(gz_file, tmp_csv)
                     df = pd.read_csv(tmp_csv.name)
-                    contents[filename[:-3]] = df.head(20).to_csv(index=False)
+                    contents[filename[:-3]] = df.to_csv(index=False)
 
             elif filename.endswith(".biom"):
                 biom_bytes = BytesIO(file.read())
@@ -288,6 +295,7 @@ def preprocess_uploaded_files(files):
             contents[filename] = f"❌ 處理失敗: {e}"
 
     return contents
+
 
 def check_filename_matches(expected_label, actual_filename):
     expected_keywords = expected_label.lower().split()
