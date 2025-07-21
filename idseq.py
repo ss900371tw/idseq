@@ -237,7 +237,7 @@ def preprocess_uploaded_files(files):
     for file in files:
         filename = file.name
         try:
-            if filename.endswith(".tar") or filename.endswith(".tar.gz") or filename.endswith(".zip"):
+            if filename.endswith(".tar") or filename.endswith(".tar.gz"):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tar_path = os.path.join(tmpdir, filename)
                     with open(tar_path, "wb") as f:
@@ -250,7 +250,20 @@ def preprocess_uploaded_files(files):
                                 df = pd.read_csv(csv_path)
                                 contents[member.name] = df.to_csv(index=False)
 
-            elif filename.endswith(".gz") :
+            elif filename.endswith(".zip"):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zip_path = os.path.join(tmpdir, filename)
+                    with open(zip_path, "wb") as f:
+                        f.write(file.read())
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(tmpdir)
+                        for member in zip_ref.namelist():
+                            member_path = os.path.join(tmpdir, member)
+                            if os.path.isfile(member_path) and member.endswith(".csv"):
+                                df = pd.read_csv(member_path)
+                                contents[member] = df.to_csv(index=False)
+
+            elif filename.endswith(".gz"):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_csv:
                     with gzip.open(file, "rb") as gz_file:
                         shutil.copyfileobj(gz_file, tmp_csv)
@@ -258,7 +271,7 @@ def preprocess_uploaded_files(files):
                     contents[filename[:-3]] = df.to_csv(index=False)
 
             elif filename.endswith(".biom"):
-                biom_bytes = BytesIO(file.read())  # 將上傳的檔案轉為 in-memory stream
+                biom_bytes = BytesIO(file.read())
                 table = load_table(biom_bytes)
                 df = pd.DataFrame(
                     table.matrix_data.toarray(),
@@ -275,7 +288,6 @@ def preprocess_uploaded_files(files):
             contents[filename] = f"❌ 處理失敗: {e}"
 
     return contents
-
 
 def check_filename_matches(expected_label, actual_filename):
     expected_keywords = expected_label.lower().split()
