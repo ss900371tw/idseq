@@ -467,7 +467,7 @@ def main():
                 "Contig Summary Reports", "Host Genes Count", "Combined Microbiome File"
             ],
             "Consensus Genome": [
-                "Consensus Genome", "Sample Metadata", "Consensus Genome Overview", "Intermediate Output Files"
+                "Sample Metadata", "Consensus Genome Overview", "Intermediate Output Files"
             ],
             "Antimicrobial Resistance": [
                 "Antimicrobial Assistance Results", "Combined AMR Results", "Sample Metadata"
