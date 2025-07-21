@@ -163,7 +163,7 @@ TEMPLATE_MAP = {
 14. 根據宿主基因表現量資料，是否可看出發炎、免疫反應或感染階段變化？
 15. 是否可推測疾病嚴重度（如病毒感染風險）或與特定臨床狀況（如 ICU 住院）有關的菌群變化？
 
-📌 請將這些問題視為分析方向指引，回答你在Metagenomics Analysis的觀察。
+📌 請將這些問題視為Metagenomics Analysis的分析方向指引，整合出一篇具有臨床觀點的觀察與見解報告。
 
 CSV 原始摘要如下：
 {csv_content}
@@ -182,7 +182,7 @@ CSV 原始摘要如下：
 9. 有哪些樣本應重新測序？例如低覆蓋、過多 N base、只覆蓋片段等情況？
 10. 是否需要進一步確認特定突變的準確性？例如在低深度或 low-complexity 區域？
 
-📌 請將這些問題視為分析方向指引，回答你在Consensus Genome Analysis的觀察。
+📌 請將這些問題視為Consensus Genome Analysis的分析方向指引，整合出一篇具有臨床觀點的觀察與見解報告。
 
 CSV 原始摘要如下：
 {csv_content}
@@ -203,7 +203,7 @@ CSV 原始摘要如下：
 11. 是否觀察到某些時間點 AMR 基因激增？是否暗示抗生素壓力下的選擇性繁殖？
 12. 有沒有樣本來自社區但出現院內常見 AMR 樣式（如 ESBL-producing E. coli）？可能為社區擴散的早期警訊？
 
-📌 請將這些問題視為分析方向指引，回答你在Antimicrobial Resistance Analysis的觀察。
+📌 請將這些問題視為Antimicrobial Resistance Analysis的分析方向指引，整合出一篇具有臨床觀點的觀察與見解報告。
 
 CSV 原始摘要如下：
 {csv_content}
