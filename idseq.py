@@ -409,7 +409,7 @@ def render_mode_card(icon, title, desc, key):
 
 def main():
     st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
-    st.title("🧬 Gemini IDSEQ 分析儀表板 (建議樣本數量至多十筆)") 
+    st.title("🧬 Gemini IDSEQ 分析儀表板") 
 
     if "selected_mode" not in st.session_state:
         st.session_state.selected_mode = None
