@@ -17,7 +17,7 @@ from biom import load_table
 from langchain_community.document_loaders import PyMuPDFLoader 
 from langchain_core.documents import Document # 雖然不是 CharTextSplitter，但有助於檢查 core 導入
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
 # ---------- RAG 設定 ----------
