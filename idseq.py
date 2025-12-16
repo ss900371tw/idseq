@@ -104,7 +104,7 @@ def generate_llm_prompt(mode, file_contents):
         "Combined Microbiome File": "樣本與微生物分類合併成 BIOM 格式。",
         "Consensus Genome Overview": "共識基因組的品質控制（QC）指標（例如：基因組覆蓋率百分比、比對到的讀數、SNP 數量）及其他統計摘要",
         "Intermediate Output Files": "中間產出的分析文件，包括 BAM 對齊檔案、覆蓋率圖、QUAST 報告等內容。",
-        "Antimicrobial Assistance Results": "包含抗藥性報告、完整的抗藥性指標、中間分析結果及 CARD RGI 工具的輸出。",
+        "Antimicrobial Resistance Results": "包含抗藥性報告、完整的抗藥性指標、中間分析結果及 CARD RGI 工具的輸出。",
         "Combined AMR Results": "整合樣本中抗藥性基因的指標（如覆蓋率、深度）為單一報告。"
     }
 
@@ -455,7 +455,7 @@ def main():
                 "Sample Metadata", "Consensus Genome Overview", "Intermediate Output Files"
             ],
             "Antimicrobial Resistance": [
-                "Antimicrobial Assistance Results", "Combined AMR Results", "Sample Metadata"
+                "Antimicrobial Resistance Results", "Combined AMR Results", "Sample Metadata"
             ]
         }
 
