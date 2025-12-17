@@ -449,7 +449,7 @@ def main():
             "Metagenomics": [
                 "Heatmap", "Sample Metadata", "Samples Overview",
                 "Sample Taxon Report", "Combined Sample Taxon Results",
-                "Contig Summary Reports", "Host Genes Count", "Combined Microbiome File"
+                "Contig Summary Reports", "Host Gene Count", "Combined Microbiome File"
             ],
             "Consensus Genome": [
                 "Sample Metadata", "Consensus Genome Overview", "Intermediate Output Files"
