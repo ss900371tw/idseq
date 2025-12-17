@@ -100,7 +100,7 @@ def generate_llm_prompt(mode, file_contents):
         "Sample Taxon Report": "各樣本中檢出的微生物分類與數據。",
         "Combined Sample Taxon Results": "彙整所有樣本的微生物數據總表。",
         "Contig Summary Reports": "Contig 的 QC 統計與覆蓋率。",
-        "Host Genes Count": "宿主轉錄表現統計。",
+        "Host Gene Count": "宿主轉錄表現統計。",
         "Combined Microbiome File": "樣本與微生物分類合併成 BIOM 格式。",
         "Consensus Genome Overview": "共識基因組的品質控制（QC）指標（例如：基因組覆蓋率百分比、比對到的讀數、SNP 數量）及其他統計摘要",
         "Intermediate Output Files": "中間產出的分析文件，包括 BAM 對齊檔案、覆蓋率圖、QUAST 報告等內容。",
@@ -143,7 +143,7 @@ TEMPLATE_MAP = {
 - Sample Metadata：樣本採集來源、時間、樣本種類
 - Samples Overview：每個樣本的品質控制（QC）與通過率
 - Contig Summary Reports：微生物基因片段的覆蓋率與序列比對品質
-- Host Genes Count：宿主基因的表現情形（可能與感染、免疫反應相關）
+- Host Gene Count：宿主基因的表現情形（可能與感染、免疫反應相關）
 - Combined Microbiome File：微生物社群組成與元數據整合
 
 請你根據上述所有可能出現的資訊回答以下你在現有資訊中有能力回答的問題，綜合分析樣本中：
