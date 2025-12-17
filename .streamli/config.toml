@@ -1,0 +1,3 @@
+[server]
+# 設定單一檔案上傳大小限制，單位為 MB
+maxUploadSize = 2048
