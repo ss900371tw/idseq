@@ -459,10 +459,14 @@ def main():
         st.markdown("## 📂 上傳檔案")
 
         for label in mode_file_fields[mode]:
+            st.markdown(f"### 📄 上傳：{label}")
+
+            # 2. 接著放上傳元件，並將 label 設為空字串 ""，或是加上 label_visibility="collapsed"
             uploaded_file = st.file_uploader(
-                f" ## 📄 上傳：{label}",
+                "",  # 留空字串，才不會重疊文字
                 type=["csv", "gz", "tar", "biom", "zip"],
-                key=f"uploader_{mode}_{label}"
+                key=f"uploader_{mode}_{label}",
+                label_visibility="collapsed"  # 這行可以完全隱藏內建的空白標籤區塊，讓排版更緊湊
             )
             if uploaded_file is not None:
                 if check_filename_matches(label, uploaded_file.name):
