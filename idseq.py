@@ -66,13 +66,90 @@ def discover_endpoints(iss):
         pass
     return None, None
 
+# ---------- 離線高品質模擬病患資料庫 (當 FHIR 伺服器斷線時自動啟用，確保 Streamlit Cloud 100% 可用) ----------
+MOCK_PATIENTS_DB = [
+    {
+        "id": "12212",
+        "name": "Jane Doe",
+        "gender": "female",
+        "birthDate": "1985-05-12",
+        "vitals": {
+            "Body Height": "165 cm",
+            "Body Weight": "58 kg",
+            "Heart rate": "78 beats/min",
+            "Respiratory rate": "16 breaths/min",
+            "Pain severity": "2/10",
+            "Head Occipital-frontal circumference": "N/A"
+        },
+        "labs": {
+            "Leukocytes [Blood]": "9.5 10^3/uL",
+            "Erythrocytes [Blood]": "4.2 10^6/uL",
+            "Hemoglobin [Blood]": "12.8 g/dL",
+            "Hematocrit [Blood]": "38.5 %",
+            "Mean corpuscular volume (MCV)": "91 fL"
+        },
+        "conditions": ["Acute Bronchitis (Onset: 2026-08-15)", "Mild Asthma (Onset: 2020-03-10)"],
+        "medications": ["Albuterol Inhaler (Prescribed: 2026-08-15)", "Amoxicillin 500mg (Prescribed: 2026-08-15)"],
+        "procedures": ["Chest X-Ray 2 Views (Date: 2026-08-15)"]
+    },
+    {
+        "id": "23526",
+        "name": "John Smith",
+        "gender": "male",
+        "birthDate": "1972-11-23",
+        "vitals": {
+            "Body Height": "178 cm",
+            "Body Weight": "82 kg",
+            "Heart rate": "92 beats/min",
+            "Respiratory rate": "20 breaths/min",
+            "Pain severity": "6/10",
+            "Head Occipital-frontal circumference": "N/A"
+        },
+        "labs": {
+            "Leukocytes [Blood]": "14.8 10^3/uL",
+            "Erythrocytes [Blood]": "4.8 10^6/uL",
+            "Hemoglobin [Blood]": "14.2 g/dL",
+            "Hematocrit [Blood]": "42.5 %",
+            "Mean corpuscular volume (MCV)": "88 fL"
+        },
+        "conditions": ["Severe Sepsis (Onset: 2026-09-01)", "Pneumonia, Bacterial (Onset: 2026-09-01)"],
+        "medications": ["Piperacillin-Tazobactam 4.5g IV (Prescribed: 2026-09-01)", "Vancomycin 1.25g IV (Prescribed: 2026-09-01)"],
+        "procedures": ["Mechanical Ventilation (Date: 2026-09-01)", "Bronchoscopy (Date: 2026-09-02)"]
+    },
+    {
+        "id": "23557",
+        "name": "Robert Johnson",
+        "gender": "male",
+        "birthDate": "1960-04-05",
+        "vitals": {
+            "Body Height": "172 cm",
+            "Body Weight": "75 kg",
+            "Heart rate": "85 beats/min",
+            "Respiratory rate": "18 breaths/min",
+            "Pain severity": "4/10",
+            "Head Occipital-frontal circumference": "N/A"
+        },
+        "labs": {
+            "Leukocytes [Blood]": "11.2 10^3/uL",
+            "Erythrocytes [Blood]": "4.5 10^6/uL",
+            "Hemoglobin [Blood]": "13.5 g/dL",
+            "Hematocrit [Blood]": "40.2 %",
+            "Mean corpuscular volume (MCV)": "89 fL"
+        },
+        "conditions": ["Urinary Tract Infection (Onset: 2026-08-28)", "Type 2 Diabetes Mellitus (Onset: 2015-06-12)"],
+        "medications": ["Ciprofloxacin 500mg PO (Prescribed: 2026-08-28)", "Metformin 1000mg PO (Prescribed: 2015-06-12)"],
+        "procedures": ["Urine Culture & Susceptibility (Date: 2026-08-28)"]
+    }
+]
+
 def get_fhir_patients(server_url):
-    """調閱 FHIR 伺服器上的病患清單"""
+    """調閱 FHIR 伺服器上的病患清單。若連線失敗，則自動啟用離線沙盒展示模式。"""
     try:
         url = f"{server_url.rstrip('/')}/Patient?_count=50"
         headers = {"Accept": "application/fhir+json"}
-        resp = requests.get(url, headers=headers, timeout=5)
+        resp = requests.get(url, headers=headers, timeout=3)
         if resp.status_code == 200:
+            st.session_state.fhir_offline_fallback = False
             bundle = resp.json()
             patients = []
             for entry in bundle.get("entry", []):
@@ -100,17 +177,38 @@ def get_fhir_patients(server_url):
                 })
             return patients
     except Exception as e:
-        st.sidebar.error(f"無法獲取病患清單: {e}")
+        # 連線失敗，自動轉入離線沙盒模式
+        st.session_state.fhir_offline_fallback = True
+        st.sidebar.warning("🔌 本地 HAPI FHIR 伺服器未連線。系統已自動切換至「離線沙盒展示模式」以供雲端 (Streamlit Cloud) 正常演示。")
+        patients = []
+        for p in MOCK_PATIENTS_DB:
+            patients.append({
+                "id": p["id"],
+                "name": p["name"],
+                "gender": p["gender"],
+                "birthDate": p["birthDate"]
+            })
+        return patients
     return []
 
 def get_fhir_patient_demographics(server_url, patient_id, token=None):
     """獲取單一病患詳細資料"""
+    if st.session_state.get("fhir_offline_fallback", False):
+        for p in MOCK_PATIENTS_DB:
+            if p["id"] == patient_id:
+                return {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "gender": p["gender"],
+                    "birthDate": p["birthDate"],
+                    "source": "Offline Sandbox Mode (離線沙盒展示)"
+                }
     try:
         url = f"{server_url.rstrip('/')}/Patient/{patient_id}"
         headers = {"Accept": "application/fhir+json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        resp = requests.get(url, headers=headers, timeout=5)
+        resp = requests.get(url, headers=headers, timeout=3)
         if resp.status_code == 200:
             resource = resp.json()
             names = resource.get("name", [])
@@ -139,6 +237,10 @@ def get_fhir_patient_demographics(server_url, patient_id, token=None):
 
 def get_fhir_patient_details(server_url, p_id, token=None):
     """獲取病患的臨床評估與診斷 (Condition)"""
+    if st.session_state.get("fhir_offline_fallback", False):
+        for p in MOCK_PATIENTS_DB:
+            if p["id"] == p_id:
+                return p["conditions"]
     conditions = []
     try:
         url = f"{server_url.rstrip('/')}/Condition?patient=Patient/{p_id}"
@@ -174,6 +276,10 @@ def get_fhir_patient_details(server_url, p_id, token=None):
 
 def get_fhir_patient_medications(server_url, p_id, token=None):
     """獲取病患的用藥處方紀錄 (MedicationRequest)"""
+    if st.session_state.get("fhir_offline_fallback", False):
+        for p in MOCK_PATIENTS_DB:
+            if p["id"] == p_id:
+                return p["medications"]
     medications = []
     try:
         url = f"{server_url.rstrip('/')}/MedicationRequest?patient=Patient/{p_id}"
@@ -207,6 +313,10 @@ def get_fhir_patient_medications(server_url, p_id, token=None):
 
 def get_fhir_patient_procedures(server_url, p_id, token=None):
     """獲取病患的醫療處置與手術紀錄 (Procedure)"""
+    if st.session_state.get("fhir_offline_fallback", False):
+        for p in MOCK_PATIENTS_DB:
+            if p["id"] == p_id:
+                return p["procedures"]
     procedures = []
     try:
         url = f"{server_url.rstrip('/')}/Procedure?patient=Patient/{p_id}"
@@ -245,6 +355,10 @@ def get_fhir_patient_procedures(server_url, p_id, token=None):
 
 def get_fhir_patient_observations(server_url, p_id, token=None):
     """獲取與分類病患的觀察檢驗紀錄 (Observation) -> 生命徵象與實驗室檢驗"""
+    if st.session_state.get("fhir_offline_fallback", False):
+        for p in MOCK_PATIENTS_DB:
+            if p["id"] == p_id:
+                return p["vitals"], p["labs"]
     vitals = {}
     labs = {}
     try:
@@ -1185,18 +1299,6 @@ def main():
         st.markdown("## 📂 上傳檔案")
 
         for label in mode_file_fields[mode]:
-            # 如果是 Sample Metadata 且已經由 FHIR 自動帶入
-            if label == "Sample Metadata":
-                if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics:
-                    st.markdown(f"### 📄 Sample Metadata — **✅ 已自 FHIR 病患資料自動調閱**")
-                    p = st.session_state.active_patient_demographics
-                    st.info(f"自動代入病患基本資料：{p.get('name')} ({p.get('gender')}, 生日: {p.get('birthDate')})")
-                    continue
-                elif analysis_scope == "「院內感控」多病患群聚分析":
-                    st.markdown(f"### 📄 Sample Metadata — **✅ 已自 FHIR 全院病患對照表自動融合代入**")
-                    st.info("系統已讀取 FHIR 伺服器全體病患註冊清單。分析時將自動掃描各樣本 Sample_ID，建立對應的臨床個資與病房床位對照表。")
-                    continue
-
             st.markdown(f"### 📄 上傳：{label}")
             uploaded_file = st.file_uploader(
                 label,  
@@ -1225,12 +1327,10 @@ def main():
                 st.warning("請至少上傳一個報告檔案或從 FHIR 連線載入病患資料，以便進行分析。")
                 return
 
-            # 檢查是否有未上傳的推薦欄位 (如果連接 FHIR 或使用感控模式則 Sample Metadata 非必傳)
+            # 檢查是否有未上傳的推薦欄位
             required_fields = mode_file_fields[mode]
             missing_fields = []
             for field in required_fields:
-                if field == "Sample Metadata" and (st.session_state.active_patient_demographics or analysis_scope == "「院內感控」多病患群聚分析"):
-                    continue
                 if field not in uploaded_files_dict:
                     missing_fields.append(field)
                     
@@ -1240,23 +1340,6 @@ def main():
 
             file_contents = preprocess_uploaded_files(uploaded_files_dict)
             
-            # 依據分析目的自動合成/代入 Sample Metadata CSV 文字
-            if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics and "Sample Metadata" not in file_contents:
-                p = st.session_state.active_patient_demographics
-                csv_data = f"""Attribute,Value
-Patient ID,{p.get('id', '')}
-Name,{p.get('name', '')}
-Gender,{p.get('gender', '')}
-BirthDate,{p.get('birthDate', '')}
-Source FHIR Server,{p.get('source', '')}
-Analysis Time,{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-"""
-                file_contents["Sample Metadata"] = csv_data
-            elif analysis_scope == "「院內感控」多病患群聚分析" and "Sample Metadata" not in file_contents:
-                # 調用跨病患映射，將 IDSEQ 檔案的 Sample ID 對應到 FHIR 病患與床位
-                csv_data = generate_cohort_metadata(file_contents, st.session_state.get("local_patients", []))
-                file_contents["Sample Metadata"] = csv_data
-
             prompt = generate_llm_prompt(mode, file_contents)
 
             # 根據分析範疇加入特定的 Gemini 臨床解讀任務指引
