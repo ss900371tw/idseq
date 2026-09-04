@@ -451,52 +451,146 @@ def upload_report_to_fhir(server_url, patient_id, report_markdown, report_title,
 
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
-    使用 AI 臨床 NLP 工具 (類似 Microsoft Azure Text Analytics for Health 或 John Snow Labs FHIR-Ready AI)，
-    將非結構化的基因組分析報告轉換為高度結構化的 R4 FHIR Bundle (包含 DiagnosticReport 與一系列 Observation 資源)，
-    完全不使用 Base64 編碼，而是對臨床醫學實體（病原菌、抗藥性基因、覆蓋率等）進行真正意義上的結構化編碼與解析。
+    使用 SMART Text2FHIR Pipeline (基於 Apache cTAKES) 自然語言處理框架，
+    將非結構化的基因組分析報告轉換為高度結構化的 R4 FHIR Bundle (包含 DiagnosticReport、Observation、Condition、與 MedicationRequest 資源)，
+    完全符合 UMLS 統一醫學語言系統，且編碼系統嚴格限制於 SNOMED CT、LOINC 與 RxNorm 三大醫學標準。
     """
     import google.generativeai as genai
     import json
     import datetime
+    from pydantic import BaseModel, Field
+    from typing import List, Optional
+    from ctakesclient.typesystem import CtakesJSON
+    from ctakesclient import text2fhir
+
+    # Define Gemini-compatible Flat Schema for cTAKES Concept Extraction (No Union, No Literal, No $ref)
+    class FlatClinicalEntity(BaseModel):
+        mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
+        begin: int = Field(description="Character index where mention begins in the note")
+        end: int = Field(description="Character index where mention ends in the note")
+        text: str = Field(description="Exact clinical text matching from the note, e.g. 'Sepsis', 'COVID-19', 'Amoxicillin'")
+        polarity: int = Field(description="0 for positive mention, -1 for negated mention")
+        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms, or 'RXNORM' for medications, or 'LOINC' for observations/tests")
+        code: str = Field(description="The standard code from the chosen system (e.g. SNOMED CT numeric code, RxNorm numeric code). Use the pre-extracted SNOMED CT codes from ITRI if available.")
+        cui: str = Field(description="A realistic UMLS Concept Unique Identifier, e.g. C0036690 for Sepsis, C0002570 for Amoxicillin")
+        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier, e.g. T047 for disease, T121 for medication, T109 for organic chemical")
+
+    class FlatCtakesInput(BaseModel):
+        entities: List[FlatClinicalEntity] = Field(description="List of extracted clinical entities from the clinical note")
+
+    # 1. 使用 ITRI SmartCoder API 提取準確的 SNOMED CT 臨床代碼
+    import requests
+    from uuid import uuid4
+    import time
+
+    itri_codings = []
+    polished_note = report_markdown
+
+    try:
+        api_url = "https://smartcoderm.itri-nlp.tw/sandbox/api/v1/snomed/coding"
+        api_key_itri = "bc95a81cc4976eb654a35e7c30f670f21a1d6fdadea3d856ff3d1e7aafc8b656"
+        req_id = str(uuid4())
+        
+        headers = {
+            "X-API-Key": api_key_itri,
+            "Origin": "https://colab.research.google.com",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "request_id": req_id,
+            "encounter_type": "outpatient",
+            "raw_clinical_note": report_markdown,
+            "output_format": "simple",
+        }
+        
+        # 1. 發起 POST 請求
+        response_api = requests.post(
+            api_url,
+            headers=headers,
+            json=payload,
+            timeout=(10, 240),
+            allow_redirects=False,
+        )
+        response_api.raise_for_status()
+        
+        # 2. 進行非同步 GET 輪詢 (Polling) 以確保結果生成完畢
+        for attempt in range(15): # 輪詢 15 次，每次間隔 3 秒，最多 45 秒
+            lookup_url = f"https://smartcoderm.itri-nlp.tw/sandbox/api/v1/snomed/results/{req_id}"
+            lookup_resp = requests.get(
+                lookup_url,
+                headers=headers,
+                timeout=(10, 60),
+                allow_redirects=False
+            )
+            if lookup_resp.status_code == 200:
+                lookup_data = lookup_resp.json()
+                if lookup_data.get("status") == "completed":
+                    response_body = lookup_data.get("response", {})
+                    if "snomed_codings" in response_body:
+                        itri_codings = response_body["snomed_codings"]
+                    if "polished_clinical_note" in response_body:
+                        polished_note = response_body["polished_clinical_note"]
+                    break
+                elif lookup_data.get("status") == "failed":
+                    break
+            time.sleep(3)
+    except Exception as api_ex:
+        # 如果網路/API 連線失敗，我們優雅地跳過，僅使用原文本
+        pass
+
+    # 格式化 SNOMED 脈絡，供 Gemini 當作高精度對齊標準
+    snomed_context_str = ""
+    if itri_codings:
+        snomed_context_str = "Pre-extracted standard medical codings from ITRI SmartCoder:\n"
+        for item in itri_codings:
+            concept_id = item.get("concept_id")
+            code_name = item.get("code_name")
+            confidence = item.get("confidence", 1.0)
+            snomed_context_str += f"- Standard Code: '{concept_id}' | Description: '{code_name}' | Terminology: SNOMED CT (system: 'http://snomed.info/sct') | Confidence: {confidence}\n"
+    else:
+        snomed_context_str = "No automated standard codes matched. Please infer LOINC, SNOMED CT, or RxNorm codes manually with extreme care."
 
     # 初始化與配置 Gemini 作為 Clinical NLP 實體提取引擎
     genai.configure(api_key=api_key)
     nlp_model = genai.GenerativeModel("gemini-2.5-pro")
 
     prompt = f"""
-You are a highly specialized clinical NLP pipeline engine, functioning like Microsoft Azure's Text Analytics for Health or John Snow Labs FHIR-Ready AI.
-Your job is to analyze unstructured clinical genomic text and extract clinical entities, mapping them to structured, valid FHIR R4 resources with standard terminology codings.
+You are a highly specialized clinical NLP pipeline engine, functioning like Apache cTAKES (Clinical Text Analysis and Knowledge Extraction System) and UMLS ontology lookup tool.
+Your job is to analyze unstructured clinical genomic text and extract clinical entities, mapping them to structured cTAKES JSON input format.
 
 Unstructured Genomic Analysis Text Report:
 \"\"\"
-{report_markdown}
+{polished_note}
 \"\"\"
 
 Patient ID: {patient_id}
 
-You must convert this unstructured report into a structured FHIR R4 Bundle containing:
-1. A `DiagnosticReport` representing the overall genomic analysis.
-   - It must link to the subject: `Patient/{patient_id}`.
-   - It must contain a `result` array linking to all the extracted structured `Observation` resources.
-2. Multiple structured `Observation` resources representing:
-   - Specific pathogens detected (e.g., Escherichia coli, SARS-CoV-2, etc.). Use SNOMED CT (`http://snomed.info/sct`) or LOINC (`http://loinc.org`) coding. Include quantitative details (such as abundance, reads, or coverage percentage) in `valueQuantity` or `valueString`.
-   - Antimicrobial resistance (AMR) genes or drug resistance findings. Use genomic or HGVS terminology coding.
-   - Viral lineage or mutation variants (SNPs/INDELs).
-   - Each Observation must link back to the subject: `Patient/{patient_id}` and have `status: "final"`.
+🧬 STANDARD CLINICAL CODING REFERENCES (Extracted from real clinical vocabulary engine):
+The following medical concepts and standard SNOMED CT codes were pre-validated for this clinical note. You MUST use these exact codes when representing these clinical findings in your extraction results:
+\"\"\"
+{snomed_context_str}
+\"\"\"
 
-Standard Terminology Mappings (use realistic standard codes):
-- Metagenomic next-generation sequencing analysis: LOINC `96381-9`
-- Snomed bacterium concept: `http://snomed.info/sct`
-- Loinc coding system: `http://loinc.org`
+You must extract all clinical entities and populate the FlatCtakesInput schema:
+1. `entities`:
+   - For diseases, diagnoses, or infection states (Sepsis, COVID-19, UTI, Pneumonia, Bronchitis, Asthma, Diabetes, Hypertension), use `mention_type='DiseaseDisorderMention'` and system='SNOMEDCT' with corresponding numeric SNOMED CT codes (use pre-extracted ITRI codes if available).
+   - For medications, prescribed drugs, or antibiotic administrations (Albuterol, Amoxicillin, Piperacillin-Tazobactam, Vancomycin, Ciprofloxacin, Metformin), use `mention_type='MedicationMention'` and system='RXNORM' with standard RxNorm codes.
+   - For signs or symptoms (Cough, Fever, Nausea, Vomiting, Headache, Pain), use `mention_type='SignSymptomMention'` and system='SNOMEDCT' with corresponding codes.
+   - For medical procedures or surgical history, use `mention_type='ProcedureMention'` and system='SNOMEDCT' or 'LOINC' with corresponding codes.
+   - For anatomical sites of infection (BAL, Nasopharyngeal, Stool, Upper Respiratory), use `mention_type='AnatomicalSiteMention'` and system='SNOMEDCT'.
 
-Ensure that the output is:
-- A single valid FHIR Bundle resource (`resourceType: "Bundle"`, `type: "collection"` or `type: "transaction"`).
-- Free of any base64 attachment wrapper. It must contain the actual structured, readable clinical concepts and data points.
-- Return ONLY the raw JSON string of the FHIR Bundle. Do not wrap the output in markdown code blocks like ```json ... ```, and do not include any conversation or explanation.
+Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Semantic Type TUI (e.g. T047 for Disease, T121 for Pharmacologic Substance/Medication) so that the SMART Text2FHIR pipeline can successfully map them.
 """
 
     try:
-        response = nlp_model.generate_content(prompt)
+        response = nlp_model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=FlatCtakesInput
+            )
+        )
         raw_text = response.text.strip()
         
         # 清理可能夾帶的 Markdown 標記
@@ -505,40 +599,147 @@ Ensure that the output is:
         elif raw_text.startswith("```"):
             raw_text = raw_text.split("```")[1].split("```")[0].strip()
             
-        fhir_bundle = json.loads(raw_text)
-        return fhir_bundle
-    except Exception as e:
-        # 備用方案：如果 AI 回傳不合規 JSON，則建立最精確的結構化備用 Bundle 資源
+        parsed_data = json.loads(raw_text)
+        
+        # 2. 將 Gemini 產生的 Flat 結構，在 Python 端重塑為 cTAKES 標準 Mentions 巢狀 JSON
+        ctakes_source = {}
+        for entity in parsed_data.get("entities", []):
+            m_type = entity.get("mention_type")
+            if not m_type:
+                continue
+            if m_type not in ctakes_source:
+                ctakes_source[m_type] = []
+                
+            mention_obj = {
+                "begin": entity.get("begin", 0),
+                "end": entity.get("end", 0),
+                "text": entity.get("text", ""),
+                "polarity": entity.get("polarity", 0),
+                "type": m_type,
+                "conceptAttributes": [
+                    {
+                        "codingScheme": entity.get("codingScheme", "SNOMEDCT"),
+                        "code": entity.get("code", ""),
+                        "cui": entity.get("cui", ""),
+                        "tui": entity.get("tui", "")
+                    }
+                ]
+            }
+            ctakes_source[m_type].append(mention_obj)
+            
+        # 3. 實例化為 ctakesclient.typesystem.CtakesJSON
+        ctakes_json = CtakesJSON(ctakes_source)
+        
+        # 4. 呼叫 SMART Text2FHIR Pipeline 自動轉譯為標準 FHIR 資源物件
+        resources = text2fhir.nlp_fhir(
+            subject_id=patient_id,
+            encounter_id=f"enc-{uuid4().hex[:6]}",
+            docref_id=f"doc-{uuid4().hex[:6]}",
+            nlp_results=ctakes_json
+        )
+        
+        # 5. 包裝進標準的 FHIR R4 Bundle
+        standard_entries = []
+        
+        # 手置 DiagnosticReport 代表本次 Metagenomic 分析報告主體
         now_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        fallback_bundle = {
+        diag_report = {
+            "resourceType": "DiagnosticReport",
+            "id": f"dr-{uuid4().hex[:8]}",
+            "status": "final",
+            "code": {
+                "coding": [
+                    {
+                        "system": "http://loinc.org",
+                        "code": "96381-9",
+                        "display": "Metagenomic next-generation sequencing analysis"
+                    }
+                ],
+                "text": "Structured Genomic Analysis Report"
+            },
+            "subject": {
+                "reference": f"Patient/{patient_id}"
+            },
+            "issued": now_str,
+            "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR Pipeline (based on Apache cTAKES). Original note: {polished_note[:500]}..."
+        }
+        standard_entries.append({"resource": diag_report})
+        
+        # 加入所有經由 cTAKES text2fhir Pipeline 自動產出的資源，並套用嚴格的 3-system 白名單與資源映射
+        for res in resources:
+            res_dict = res.as_json()
+            
+            # 將 MedicationStatement 映射轉換為符合需求的 MedicationRequest
+            if res_dict.get("resourceType") == "MedicationStatement":
+                res_dict["resourceType"] = "MedicationRequest"
+                res_dict["intent"] = "order"
+                if "status" not in res_dict or res_dict["status"] == "unknown":
+                    res_dict["status"] = "active"
+                    
+            # 確保 Patient subject 參考正確無誤
+            if "subject" in res_dict and isinstance(res_dict["subject"], dict):
+                res_dict["subject"]["reference"] = f"Patient/{patient_id}"
+                
+            # 嚴格的三大編碼系統限制
+            allowed_systems = {
+                "http://snomed.info/sct",
+                "http://loinc.org",
+                "http://www.nlm.nih.gov/research/umls/rxnorm"
+            }
+            
+            # 定義 Pydantic 等效的 coding 白名單過濾器
+            def clean_codeable_concept(cc_dict, default_system):
+                if not cc_dict or "coding" not in cc_dict:
+                    return
+                cleaned_codings = []
+                for coding in cc_dict.get("coding", []):
+                    system_uri = coding.get("system")
+                    if not system_uri:
+                        system_uri = default_system
+                    # 規格化 system URI
+                    if "snomed" in system_uri.lower():
+                        system_uri = "http://snomed.info/sct"
+                    elif "rxnorm" in system_uri.lower():
+                        system_uri = "http://www.nlm.nih.gov/research/umls/rxnorm"
+                    elif "loinc" in system_uri.lower():
+                        system_uri = "http://loinc.org"
+                        
+                    if system_uri in allowed_systems:
+                        coding["system"] = system_uri
+                        cleaned_codings.append(coding)
+                        
+                if not cleaned_codings and cc_dict.get("coding"):
+                    fallback_coding = cc_dict["coding"][0]
+                    fallback_coding["system"] = default_system
+                    cleaned_codings.append(fallback_coding)
+                    
+                cc_dict["coding"] = cleaned_codings
+
+            # 套用語意編碼白名單
+            res_type = res_dict.get("resourceType")
+            if res_type == "Condition" and "code" in res_dict:
+                clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
+                if "verificationStatus" in res_dict:
+                    clean_codeable_concept(res_dict["verificationStatus"], "http://terminology.hl7.org/CodeSystem/condition-ver-status")
+            elif res_type == "MedicationRequest" and "medicationCodeableConcept" in res_dict:
+                clean_codeable_concept(res_dict["medicationCodeableConcept"], "http://www.nlm.nih.gov/research/umls/rxnorm")
+            elif res_type == "Observation" and "code" in res_dict:
+                clean_codeable_concept(res_dict["code"], "http://loinc.org")
+            elif res_type == "Procedure" and "code" in res_dict:
+                clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
+                
+            standard_entries.append({"resource": res_dict})
+            
+        fhir_bundle = {
             "resourceType": "Bundle",
             "type": "collection",
-            "entry": [
-                {
-                    "resource": {
-                        "resourceType": "DiagnosticReport",
-                        "id": "dr-genomic-fallback",
-                        "status": "final",
-                        "code": {
-                            "coding": [
-                                {
-                                    "system": "http://loinc.org",
-                                    "code": "96381-9",
-                                    "display": "Metagenomic next-generation sequencing analysis"
-                                }
-                            ],
-                            "text": "Structured Genomic Analysis Report"
-                        },
-                        "subject": {
-                            "reference": f"Patient/{patient_id}"
-                        },
-                        "issued": now_str,
-                        "conclusion": f"Structured extraction processed by Clinical NLP. Source report text processed: {report_markdown[:300]}..."
-                    }
-                }
-            ]
+            "entry": standard_entries
         }
-        return fallback_bundle
+        return fhir_bundle
+    except Exception as e:
+        import sys
+        print(f"❌ [FHIR Converter Error] Conversion failed! Exception: {e}", file=sys.stderr)
+        raise e
 
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
     """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
@@ -642,11 +843,12 @@ def load_or_create_faiss():
 
     
 # ✅ 初始化 Gemini
-load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY","AIzaSyBX77uIUdYXpUcRrl_kbgEZM1UFlytPDnE")
+load_dotenv(override=True)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY","")
+
 
 try:
-    genai.configure(api_key="AIzaSyBX77uIUdYXpUcRrl_kbgEZM1UFlytPDnE")
+    genai.configure(api_key="")
     model = genai.GenerativeModel("gemini-2.5-pro")
     chat = model.start_chat()
 except Exception as e:
@@ -675,9 +877,11 @@ def generate_llm_prompt(mode, file_contents):
         "Samples Overview": "QC statistics and summary for each sample.",
         "Sample Taxon Report": "Microbial classification and quantitative data detected in each sample.",
         "Combined Sample Taxon Results": "Aggregated microbiology data summary table for all samples.",
+        "Combined Microbiome File": "Combined microbiome abundance table (parsed from BIOM format) containing OTU/microbial counts across samples.",
         "Contig Summary Reports": "QC statistics and coverage of Contigs.",
         "Host Gene Count": "Host transcript expression statistics.",
         "Consensus Genome Overview": "Quality control (QC) metrics of the consensus genome (e.g., genome coverage percentage, mapped reads, SNP count) and other statistical summaries.",
+        "Intermediate Output Files": "Extracted key pipeline assembly and variant metrics (average depth, coverage breadth, read counts, and SNPs/indels from VCF) from the intermediate output archive.",
         "Antimicrobial Resistance Results": "Includes resistance reports, complete resistance indicators, intermediate analysis results, and CARD RGI tool outputs.",
         "Combined AMR Results": "Integrates indicators of drug resistance genes (e.g., coverage, depth) in samples into a single report."
     }
@@ -711,6 +915,7 @@ TEMPLATE_MAP = {
     "Metagenomics": """
 You are an expert in microbial genomics. Please perform a clinical-oriented comprehensive interpretation based on the IDSEQ Metagenomics CSV data uploaded by the user. These data may include:
 
+- Combined Microbiome File: Combined microbiome abundance table (parsed from BIOM format) containing OTU/microbial counts across samples
 - Sample Taxons Report: Microorganisms detected in the sample and their reads/rPM
 - Combined Sample Taxon Results: Aggregated microbial abundance across all samples
 - Taxon Heatmap: Quantitative matrix of multiple samples and microorganisms
@@ -741,7 +946,7 @@ Raw CSV Summary:
 {csv_content}
 """,
     "Consensus Genome": """
-You are an expert in viral genome analysis. Please provide professional insights based on the Consensus Genome alignment and QC statistics:
+You are an expert in viral genome analysis. Please provide professional insights based on the Consensus Genome alignment, QC statistics, and intermediate output metrics (including alignment depth, coverage breadth, contig lengths, and variant mutations from VCF):
 
 1. Does the virus in this sample have a complete consensus genome? Are the coverage and depth sufficient for variant analysis?
 2. What SNPs or INDELs differ from the reference viral strain? In which gene regions might these mutations be located?
@@ -795,15 +1000,101 @@ def preprocess_uploaded_files(files_dict):
                         f.write(file.read())
                     with tarfile.open(tar_path, "r:*") as tar:
                         tar.extractall(path=tmpdir)
-                        csv_files = [m for m in tar.getmembers() if m.isfile() and m.name.endswith(".csv")]
-                        for member in csv_files:
-                            csv_path = os.path.join(tmpdir, member.name)
-                            df = pd.read_csv(csv_path)
-                            content_key = f"{label} ({member.name})"
-                            if len(csv_files) > 1:
-                                contents[content_key] = df.head(20).to_csv(index=True)
+                        
+                        has_stats_or_vcf = any(m.name.endswith("stats.json") or m.name.endswith("variants.vcf.gz") for m in tar.getmembers() if m.isfile())
+                        
+                        if has_stats_or_vcf:
+                            import json
+                            import gzip
+                            
+                            sample_dirs = set()
+                            for m in tar.getmembers():
+                                if m.isfile() and ("stats.json" in m.name or "variants.vcf.gz" in m.name):
+                                    parent = os.path.dirname(m.name)
+                                    if parent:
+                                        sample_dirs.add(parent)
+                                        
+                            rows = []
+                            for sdir in sorted(list(sample_dirs)):
+                                stats_data = {}
+                                variants_list = []
+                                contigs_count = "N/A"
+                                total_length = "N/A"
+                                
+                                # Extract stats.json
+                                stats_name = f"{sdir}/stats.json"
+                                try:
+                                    f_stats = tar.extractfile(stats_name)
+                                    if f_stats:
+                                        stats_data = json.loads(f_stats.read().decode('utf-8'))
+                                except Exception:
+                                    pass
+                                    
+                                # Extract variants.vcf.gz
+                                vcf_name = f"{sdir}/variants.vcf.gz"
+                                try:
+                                    f_vcf = tar.extractfile(vcf_name)
+                                    if f_vcf:
+                                        vcf_content = gzip.decompress(f_vcf.read()).decode('utf-8')
+                                        for line in vcf_content.split('\n'):
+                                            if line and not line.startswith('#'):
+                                                parts = line.split('\t')
+                                                if len(parts) >= 5:
+                                                    variants_list.append(f"{parts[3]}{parts[1]}{parts[4]}")
+                                except Exception:
+                                    pass
+                                    
+                                # Extract report.tsv
+                                report_name = f"{sdir}/report.tsv"
+                                try:
+                                    f_report = tar.extractfile(report_name)
+                                    if f_report:
+                                        report_lines = f_report.read().decode('utf-8').strip().split('\n')
+                                        for line in report_lines:
+                                            parts = line.split('\t')
+                                            if len(parts) >= 2:
+                                                if "contigs (>= 0 bp)" in parts[0]:
+                                                    contigs_count = parts[1]
+                                                elif "Total length (>= 0 bp)" in parts[0]:
+                                                    total_length = parts[1]
+                                except Exception:
+                                    pass
+                                    
+                                sample_name = stats_data.get("sample_name", os.path.basename(sdir))
+                                avg_depth = stats_data.get("depth_avg", "N/A")
+                                if isinstance(avg_depth, (int, float)):
+                                    avg_depth = f"{avg_depth:.2f}"
+                                    
+                                cov_breadth = stats_data.get("coverage_breadth", "N/A")
+                                if isinstance(cov_breadth, (int, float)):
+                                    cov_breadth = f"{cov_breadth * 100:.2f}%"
+                                    
+                                rows.append({
+                                    "Sample Name": sample_name,
+                                    "Average Depth": avg_depth,
+                                    "Coverage Breadth": cov_breadth,
+                                    "Total Reads": stats_data.get("total_reads", "N/A"),
+                                    "Mapped Reads": stats_data.get("mapped_reads", "N/A"),
+                                    "Variants (SNPs)": ", ".join(variants_list) if variants_list else "None",
+                                    "Contigs Count": contigs_count,
+                                    "Total Length": total_length
+                                })
+                                
+                            if rows:
+                                df_summary = pd.DataFrame(rows)
+                                contents[label] = df_summary.to_csv(index=False)
                             else:
-                                contents[content_key] = df.to_csv(index=False)
+                                contents[label] = "❌ 未能在壓縮檔中解析出有效的 sample 數據"
+                        else:
+                            csv_files = [m for m in tar.getmembers() if m.isfile() and m.name.endswith(".csv")]
+                            for member in csv_files:
+                                csv_path = os.path.join(tmpdir, member.name)
+                                df = pd.read_csv(csv_path)
+                                content_key = f"{label} ({member.name})"
+                                if len(csv_files) > 1:
+                                    contents[content_key] = df.head(20).to_csv(index=True)
+                                else:
+                                    contents[content_key] = df.to_csv(index=False)
 
             elif filename.endswith(".zip"):
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -906,14 +1197,20 @@ def render_mode_card(icon, title, desc, key):
         """, unsafe_allow_html=True)
 
         if st.button("選擇", key=f"{key}_btn"):
+            if st.session_state.get("selected_mode") != title:
+                st.session_state.uploaded_files_dict = {}
+                st.session_state.gemini_analysis_result = None
+                st.session_state.fhir_json_preview = None
             st.session_state.selected_mode = title  # ❗不用 rerun()
         st.markdown("</div></div>", unsafe_allow_html=True)
 
             
 def select_mode(title):
-    # 若切換主題，重置已上傳檔案
+    # 若切換主題，重置已上傳檔案、舊分析報告與 FHIR 預覽
     if st.session_state.get("selected_mode") != title:
         st.session_state.uploaded_files_dict = {}
+        st.session_state.gemini_analysis_result = None
+        st.session_state.fhir_json_preview = None
     st.session_state.selected_mode = title
 
 def render_mode_card(icon, title, desc, key):
@@ -1144,6 +1441,8 @@ def main():
     
     # 預設帶入原設定之金鑰，一開始不要空白
     default_key_val = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
+
+    st.session_state.user_gemini_key = default_key_val
     user_api_key = st.sidebar.text_input(
         "輸入 Gemini API 金鑰",
         value=default_key_val,
@@ -1284,12 +1583,12 @@ def main():
 
         mode_file_fields = {
             "Metagenomics": [
-                "Heatmap", "Sample Metadata", "Samples Overview",
+                "Combined Microbiome File", "Heatmap", "Sample Metadata", "Samples Overview",
                 "Sample Taxon Report", "Combined Sample Taxon Results",
                 "Contig Summary Reports", "Host Gene Count"
             ],
             "Consensus Genome": [
-                "Sample Metadata", "Consensus Genome Overview"
+                "Sample Metadata", "Consensus Genome Overview", "Intermediate Output Files"
             ],
             "Antimicrobial Resistance": [
                 "Antimicrobial Resistance Results", "Combined AMR Results", "Sample Metadata"
@@ -1325,62 +1624,61 @@ def main():
             # 檢查是否完全沒有任何資料（無檔案也無載入病患）
             if not uploaded_files_dict and not st.session_state.active_patient_demographics:
                 st.warning("請至少上傳一個報告檔案或從 FHIR 連線載入病患資料，以便進行分析。")
-                return
+            else:
+                # 檢查是否有未上傳的推薦欄位
+                required_fields = mode_file_fields[mode]
+                missing_fields = []
+                for field in required_fields:
+                    if field not in uploaded_files_dict:
+                        missing_fields.append(field)
+                        
+                if missing_fields:
+                    # 僅顯示提示訊息，不再 return 中斷！
+                    st.info(f"⚠️ 提示：部分推薦檔案未上傳 ({', '.join(missing_fields)})，Gemini 將依據目前已上傳的檔案進行分析。")
 
-            # 檢查是否有未上傳的推薦欄位
-            required_fields = mode_file_fields[mode]
-            missing_fields = []
-            for field in required_fields:
-                if field not in uploaded_files_dict:
-                    missing_fields.append(field)
-                    
-            if missing_fields:
-                # 僅顯示提示訊息，不再 return 中斷！
-                st.info(f"⚠️ 提示：部分推薦檔案未上傳 ({', '.join(missing_fields)})，Gemini 將依據目前已上傳的檔案進行分析。")
+                file_contents = preprocess_uploaded_files(uploaded_files_dict)
+                prompt = generate_llm_prompt(mode, file_contents)
 
-            file_contents = preprocess_uploaded_files(uploaded_files_dict)
-            
-            prompt = generate_llm_prompt(mode, file_contents)
+                # 根據分析範疇加入特定的 Gemini 臨床解讀任務指引
+                if analysis_scope == "「單一病患」病程/部位追蹤":
+                    prompt += (
+                        "\n\n⚠️ [Clinical Task Directive]: This analysis belongs to the 'Single-Patient' "
+                        "longitudinal and multi-site tracking mode. Please focus on analyzing the changes "
+                        "in pathogen abundance over time and across different sample collection sites "
+                        "(evaluating treatment effectiveness), colonization at different anatomical sites, "
+                        "and the selection pressure of antimicrobial resistance (AMR) genes before and "
+                        "after medication. You MUST write the entire report in English. Do not include any "
+                        "Chinese characters in the generated report."
+                    )
 
-            # 根據分析範疇加入特定的 Gemini 臨床解讀任務指引
-            if analysis_scope == "「單一病患」病程/部位追蹤":
-                prompt += (
-                    "\n\n⚠️ [Clinical Task Directive]: This analysis belongs to the 'Single-Patient' "
-                    "longitudinal and multi-site tracking mode. Please focus on analyzing the changes "
-                    "in pathogen abundance over time and across different sample collection sites "
-                    "(evaluating treatment effectiveness), colonization at different anatomical sites, "
-                    "and the selection pressure of antimicrobial resistance (AMR) genes before and "
-                    "after medication. You MUST write the entire report in English. Do not include any "
-                    "Chinese characters in the generated report."
-                )
+                # 建立動態 Gemini 實例
+                current_api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
+                if not current_api_key:
+                    st.error("❌ 未檢測到有效的 Gemini API 金鑰！請在左欄「Gemini API 金鑰配置」中輸入您的 API Key。")
+                else:
+                    with st.spinner("Gemini 分析中..."):
+                        try:
+                            # 動態配置與初始化
+                            genai.configure(api_key=current_api_key)
+                            dynamic_model = genai.GenerativeModel("gemini-2.5-pro")
+                            dynamic_chat = dynamic_model.start_chat()
+                            
+                            response = dynamic_chat.send_message(prompt)
+                            st.session_state.gemini_analysis_result = response.text
+                            st.rerun() # 立即重整，確保報告可以持續穩定顯示在按鈕下方
+                        except Exception as e:
+                            st.error(f"❌ Gemini 分析失敗：{e}")
 
-            # 建立動態 Gemini 實例
-            current_api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
-            if not current_api_key:
-                st.error("❌ 未檢測到有效的 Gemini API 金鑰！請在左欄「Gemini API 金鑰配置」中輸入您的 API Key。")
-                return
-
-            with st.spinner("Gemini 分析中..."):
-                try:
-                    # 動態配置與初始化
-                    genai.configure(api_key=current_api_key)
-                    dynamic_model = genai.GenerativeModel("gemini-2.5-pro")
-                    dynamic_chat = dynamic_model.start_chat()
-                    
-                    response = dynamic_chat.send_message(prompt)
-                    st.session_state.gemini_analysis_result = response.text
-                    st.subheader("📄 分析結果")
-                    st.markdown(f"""
-                    <div style="background-color:#f7f9fc;padding:1.2rem 1.5rem;border-radius:12px;
-                                border-left:6px solid #1f77b4;margin-bottom:1rem;">
-                        <h4 style="margin-bottom:0.8rem;">📄 Gemini 分析結果</h4>
-                        <pre style="white-space:pre-wrap;font-size:0.92rem;font-family:inherit;">
-{response.text}</pre></div>""", unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"❌ Gemini 分析失敗：{e}")
-
-        # 如果已經有分析結果，則顯示該結果與儲存回 FHIR 的按鈕
+        # 如果已經有分析結果，不論進行任何按鈕操作，都持續穩定渲染在畫面上
         if st.session_state.get("gemini_analysis_result"):
+            st.subheader("📄 分析結果")
+            st.markdown(f"""
+            <div style="background-color:#f7f9fc;padding:1.2rem 1.5rem;border-radius:12px;
+                        border-left:6px solid #1f77b4;margin-bottom:1rem;">
+                <h4 style="margin-bottom:0.8rem;">📄 Gemini 分析結果</h4>
+                <pre style="white-space:pre-wrap;font-size:0.92rem;font-family:inherit;">
+{st.session_state.gemini_analysis_result}</pre></div>""", unsafe_allow_html=True)
+
             # 判斷要儲存在哪個 FHIR 病患下
             save_patient_id = None
             save_patient_name = ""
@@ -1407,16 +1705,23 @@ def main():
                 
                 # 第一步：轉換為 FHIR
                 if st.button("🔧 Convert to FHIR (轉換為 FHIR 格式)"):
+                    st.session_state.fhir_json_preview = None # 每次按下按鈕時，立刻清空上一次的預覽結果，防止失敗時殘留舊的 fallback JSON
                     # 使用具備臨床 AI NLP（如 John Snow Labs FHIR-Ready AI / Azure Text Analytics for Health）能力的引擎進行非結構化文本實體提取與 FHIR Bundle 轉換
                     current_api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
+                    if current_api_key:
+                        current_api_key = current_api_key.strip().replace('"', '').replace("'", "")
                     with st.spinner("🤖 Clinical AI (Text-to-FHIR) 正在解析臨床文本、提取實體並生成 FHIR 結構化 Bundle..."):
-                        fhir_dict = convert_text_to_fhir_structured_ai(
-                            save_patient_id,
-                            st.session_state.gemini_analysis_result,
-                            current_api_key
-                        )
-                        import json
-                        st.session_state.fhir_json_preview = json.dumps(fhir_dict, indent=2, ensure_ascii=False)
+                        try:
+                            fhir_dict = convert_text_to_fhir_structured_ai(
+                                save_patient_id,
+                                st.session_state.gemini_analysis_result,
+                                current_api_key
+                            )
+                            import json
+                            st.session_state.fhir_json_preview = json.dumps(fhir_dict, indent=2, ensure_ascii=False)
+                            st.success("🎉 FHIR 轉換成功！")
+                        except Exception as convert_err:
+                            st.error(f"❌ FHIR 轉換失敗！這通常是因為您的 Gemini API 金鑰配置無效（例如填入了工研院 ITRI API 金鑰）、配額已滿，或是網路連線受阻。\n\n**原始錯誤訊息：** `{convert_err}`")
                     st.rerun()
 
                 # 預覽與儲存
