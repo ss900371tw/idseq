@@ -913,113 +913,62 @@ def generate_llm_prompt(mode, file_contents):
 # Prompt 模板
 TEMPLATE_MAP = {
     "Metagenomics": """
-You are an expert in microbial genomics. Please perform a clinical-oriented comprehensive interpretation based on the IDSEQ Metagenomics CSV data uploaded by the user. These data may include:
-
-- Combined Microbiome File: Combined microbiome abundance table (parsed from BIOM format) containing OTU/microbial counts across samples
-- Sample Taxons Report: Microorganisms detected in the sample and their reads/rPM
-- Combined Sample Taxon Results: Aggregated microbial abundance across all samples
-- Taxon Heatmap: Quantitative matrix of multiple samples and microorganisms
-- Sample Metadata: Sample collection source, time, sample type
-- Samples Overview: Quality control (QC) and pass rate of each sample
-- Contig Summary Reports: Coverage and sequence alignment quality of microbial gene fragments
-- Host Gene Count: Host gene expression (potentially related to infection and immune response)
-
-Please answer the following questions based on all the above possible information that you are capable of answering, comprehensively analyzing:
-
-1. Did clinical high-risk or WHO high-alert pathogens appear in the samples? If so, in which samples?
-2. Which microorganisms appeared at high abundance or high frequency overall, possessing epidemiological or clinical significance?
-3. Are there rare strains that appeared only in specific samples? Could these strains represent specific infection sources (e.g., environmental or healthcare-associated)?
-4. Are there significant differences in the community structure among different samples? Do they represent specific disease stages?
-5. List the high-abundance species and their corresponding samples, and indicate whether this is consistent with clinical diagnosis.
-6. Do different sample sources (e.g., BAL, stool) correspond to specific microbial compositions?
-7. Do specific species repeatedly appear in different time points or samples, suggesting potential persistent infection?
-8. Are there any samples unsuitable for analysis due to poor quality control (e.g., low non-host reads, total reads too low)? Which samples should be excluded?
-9. Is there any background interference due to excessively high human reads?
-10. Which species have the best alignment coverage and depth, indicating high credibility? Are there species where only partial gene fragments aligned successfully?
-11. Are there any alignment results with poor quality? Does this affect the diagnostic reliability of the species?
-12. Based on the host gene expression data, can you observe changes in inflammation, immune response, or infection stages?
-13. Can you infer disease severity (e.g., viral infection risk) or changes in microbial community related to specific clinical conditions (e.g., ICU admission)?
-
-📌 Please use these questions as guidelines for Metagenomics Analysis to synthesize a clinical observation and insight report. The final report MUST be written entirely in English.
-
-Raw CSV Summary:
+您是一位微生物基因體學專家。請根據使用者上載的 IDSEQ Metagenomics CSV 資料，進行臨床導向的綜合判讀：
+ 
+1. 樣本中是否出現臨床高風險或 WHO 高警戒病原體？若有，在哪幾個樣本中？
+2. 哪些微生物在整體上呈現高豐度或高頻率，並具備流行病學或臨床意義？
+3. 是否有僅在特定樣本中出現的罕見菌株？這些菌株是否代表特定的感染來源（例如環境或醫療照護相關）？
+4. 不同樣本之間的群落結構是否有顯著差異？它們是否代表特定的疾病階段？
+5. 列出高豐度物種及其對應的樣本，並指出這是否與臨床診斷一致？
+6. 不同的樣本來源（例如支氣管肺泡灌洗液 BAL、糞便）是否對應到特定的微生物組成？
+7. 是否有特定物種在不同的時間點或樣本中反覆出現，暗示潛在的持續性感染？
+8. 是否有任何樣本因品質控制不佳（例如非宿主 reads 過低、總 reads 太低）而不適合分析？應該排除哪些樣本？
+9. 是否存在因人類 reads 過高而導致的背景干擾？
+10. 哪些物種具有最佳的比對覆蓋度與深度，顯示出高度可信度？是否存在僅部分基因片段比對成功的物種？
+11. 是否有任何品質不佳的比對結果？這是否會影響該物種的診斷可靠性？
+12. 根據宿主基因表現資料，是否能觀察到發炎、免疫反應或感染階段的變化？
+13. 是否能推斷疾病嚴重度（例如病毒感染風險）或與特定臨床狀況（例如入住加護病房 ICU）相關的微生物群落變化？
+ 
+📌 請以這些問題作為總體基因體學（Metagenomics）分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
+ 
+原始 CSV 摘要：
 {csv_content}
 """,
     "Consensus Genome": """
-您是一位基因體流行病學與參考序列導向定序判讀專家。請依下列步驟判讀所附的一致性基因體與品管資料。這是內部分析檢核表，不是報告大綱。
-
-一、輸入完整性檢查
-先確認實際取得哪些資料，缺少者其對應問題一律回覆無法判定：
-・基因體回收率、深度與未定序鹼基統計 → 品管判定
-・變異清單且含各位點深度與等位基因資訊 → 變異判讀
-・一致性序列本身 → 未定序區間計算
-・專用分型工具輸出（病毒的譜系或 clade 指派、細菌的 MLST／cgMLST／ 血清型／spa type 等）→ 分型的唯一合法來源
-・突變功能註釋表 → 抗原性、傳播力、抗藥性等意義判定
-若僅有序列而無變異清單，不得列舉突變。
-若無分型工具輸出，所有分型問題一律回覆
-Typing result not provided; cannot be determined from this data。
-
-二、品管閘門
-依上方門檻將每個樣本分級，此分級決定後續可作宣稱的範圍。
-同時檢視：未定序鹼基與模糊鹼基數量、平均深度與深度分布、
-比對到參考序列的讀取數佔比、以及參考序列選擇是否適當（參考株與檢體的親緣距離過遠時，回收率下降屬預期，不代表檢體品質差）。
-判定不合格者僅輸出品管結果與重驗建議，不得列舉變異，不得與參考序列比較相似度。
-
-三、遮蔽感知推論（本模板最重要的規則）
-1. 計算所有達門檻長度的連續未定序區間，列為未評估區間。
-2. 每一項關於變異的陳述都必須限定於已定序位點。
-3. 嚴禁下列表述：「未偵測到某突變」「與參考株一致」「無變異」，除非已確認該位點落在已定序區域內。正確表述為 Position n was not covered; the presence or absence of this variant cannot be determined。
-4. 若未評估區間落在功能關鍵區（依病原而定，例如病毒的受體結合區與抗原決定區、抗藥性決定區、疫苗抗原標的、以及臨床檢驗用引子與探針的結合區），必須在 Summary 與 Limitations 兩處明確指出該樣本無法評估該區域。最後一項尤其重要：關鍵區的缺口意味著無法評估既有分子檢驗是否會失效。
-5. 低回收率樣本的「變異數目少」不得解釋為「與參考株接近」。變異數必須以每 kb 已定序位點正規化後才可跨樣本比較。
-  
-四、技術性假象辨識
-1. 引子組或捕捉探針的設計世代與檢體的親緣位置是否相符。不相符時，覆蓋缺口為預期結果，屬技術問題而非生物學發現。
-2. 若多個獨立樣本在相同座標區間出現缺口，判定為引子或擴增子層級的系統性失敗，屬批次層級品管問題，不得逐樣本解釋為個別檢體品質。
-3. 深度低於門檻的變異一律標示 requires manual confirmation，不得納入分型或表型推論。
-4. 相鄰位點的連續變異且深度偏低時，優先考慮比對假象或多鹼基變異被拆分呼叫，而非多個獨立突變。
-5. 落在引子結合區內或邊界的變異，須標示可能為引子引入。
-6. 同源區、重複序列與低複雜度區域的變異，可信度應降級。
-
-五、分型與變異意義（僅轉述，不推論）
-1. 分型結果只能轉述專用工具的輸出，含其品質旗標與置信度。禁止由變異組合自行推斷分型，禁止宣稱「可能是新型別或新變異株」。新穎性的判定需與適當的參考資料庫做系統性比對，不是本模型的工作。
-2. 變異的功能意義只能引用隨資料提供的註釋表。無註釋表時回覆 Functional annotation requires an external curated database that was not provided。禁止以記憶中的特定型別或突變名稱作為比較基準，這類命名會隨時間失效。
-3. 同義與非同義變異、以及變異所在基因與蛋白質座標的換算，須有基因註釋來源；無註釋時僅報告核酸座標。
-
-六、族群內變異與元資料檢查
-1. 若變異清單含等位基因頻率或正反股支持數，檢查是否存在中間頻率的等位基因，提示混合感染、樣本間交叉污染或宿主體內演化。模糊鹼基比例偏高時，須評估是否為混合檢體而非單純品質問題。無此資訊時明確說明未評估族群內變異。
-2. 分子時鐘合理性：對已知演化速率的病原，比較「與參考序列的變異數」與「宣稱的採檢日期」是否相容。嚴重不符代表 metadata 錯誤、樣本標示錯誤，或參考序列選擇不當。發現不符時須於 Limitations 指出，並降低所有時序相關結論的確定性。不得由本模型逕行斷定樣本年代，應建議以專用分型工具驗證。
-3. 若提供多個樣本，可指出序列間的差異數，但不得據此建構傳播鏈或宣稱群聚事件——流行病學關聯需要採檢時間、地點與接觸史，且須以適當的親緣分析方法為之。
-
-七、上傳與重驗評估
-建議提交公開資料庫（GenBank、ENA、GISAID、PubMLST 等）的條件：
-回收率達門檻、模糊鹼基比例低、無未解決的低深度關鍵變異。逐項列出依據。
-建議重新定序時，須具體指出哪些區間、什麼原因（覆蓋不足、關鍵區缺口、深度不足以支持變異呼叫、疑似混合檢體）。
-
-📌 禁止逐題問答式輸出。最終報告必須完全以英文撰寫，依下列結構：
-Summary ／ Quality Control Assessment（每樣本 PASS、CAUTION 或 FAIL）／ Findings（所有變異陳述須限定於已定序區域）／ Evidence Table／ Limitations（必填：每個樣本的未評估區間、所用門檻、已辨識的技術假象）／ Recommended Next Steps ／ 結尾加註
-For research use only. Not a diagnostic determination. Requires review by a qualified clinician or clinical microbiologist.
-每項具體宣稱都須附出處，格式為（樣本名；指標名稱 = 數值）。
-資料：
+您是一位病毒基因體學分析專家。請根據一致性基因體 (Consensus Genome) 比對與品管 (QC) 統計數據，提供專業見解：
+ 
+1. 此樣本中的病毒是否具有完整的一致性基因體？其覆蓋度與深度是否足以進行變異分析？
+2. 與參考病毒株相比，存在哪些 SNPs 或 INDELs？這些突變可能位於哪些基因區域？
+3. 此樣本是否屬於已知病毒株的譜系 (lineage)？它會不會是新的變異株？
+4. 觀察到的突變是否與已知的免疫逃脫、傳染力增加或藥物抗性相關？
+5. 是否存在類似已知高風險變異株（例如 XBB.1.5、BA.2.86）的突變？
+6. 此樣本的一致性基因體是否完整到足以進行公共衛生通報或資料庫提交（例如 GISAID）？
+7. 哪些樣本應該重新定序？（例如低覆蓋度、過多的 N 鹼基、僅覆蓋部分片段）？
+8. 是否需要進一步確認特定突變的準確性？（例如在低深度或低複雜度區域）？
+ 
+📌 請以這些問題作為一致性基因體分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
+ 
+原始 CSV 摘要：
 {csv_content}
 """,
     "Antimicrobial Resistance": """
-You are a clinical infectious disease and antimicrobial resistance (AMR) genomics expert. Please perform a risk-oriented analysis and clinical insight determination based on the following CSV (Combined AMR Results):
-
-1. Which AMR genes were detected in each sample? Please list their corresponding antibiotic classes and mechanisms of action (e.g., β-lactamase, efflux pump, target modification).
-2. Which genes correspond to WHO-declared 'critical priority' drug-resistant bacteria (e.g., CRE, ESBL, MRSA, VRE)?
-3. Were any high-risk multidrug-resistant gene combinations detected? (e.g., carbapenemase + porin loss + efflux pump); please flag these as high risk for reporting.
-4. Based on the AMR genotype of each sample, which antibiotic classes are recommended that may still be effective (e.g., polymyxin, tigecycline)? Have any first-line drugs completely failed?
-5. Do any samples fit the definition of MDR (multidrug resistance) or XDR (extensively drug-resistant) according to CDC/ECDC classification standards?
-6. Based on the drug recommendation table, are there samples with no recommended drugs? Might these samples require further phenotypic antimicrobial susceptibility testing?
-7. Are certain AMR genes highly co-occurrent with specific species? (e.g., NDM with Klebsiella, ermB with Streptococcus)?
-8. Are there genes indicating disinfectant resistance? (e.g., qacE, mdfA, tolC, etc.) that impact infection control measures?
-9. Were any plasmid-mediated AMR genes detected? Do they pose a high risk of transmission?
-10. Are there specific time points where AMR genes surged? Does this suggest selective pressure and propagation under antibiotic use?
-11. Are there any AMR genes with low coverage or low alignment quality? Do these results require manual review or exclusion?
-
-📌 Please use these questions as guidelines for Antimicrobial Resistance Analysis to synthesize a clinical observation and insight report. The final report MUST be written entirely in English.
-
-Raw CSV Summary:
+您是一位臨床感染症與抗生素抗藥性 (AMR) 基因體學專家。請根據綜合 AMR 結果進行風險導向分析與臨床洞察判讀：
+ 
+1. 每個樣本中檢測到了哪些 AMR 基因？請列出其對應的抗生素類別與作用機制（例如 $\beta$-內醯胺酶、外排泵、標的修飾）。
+2. 哪些基因對應到 WHO 宣告的「關鍵優先級 (critical priority)」抗藥性細菌（例如 CRE、ESBL、MRSA、VRE）？
+3. 是否檢測到任何高風險的多重抗藥性基因組合？（例如碳青黴烯酶 + 孔蛋白缺失 + 外排泵）；請將這些標示為高風險以進行通報。
+4. 根據每個樣本的 AMR 基因型，建議哪些抗生素類別可能仍然有效（例如多黏菌素、替加環素）？是否有任何一線藥物已經完全失效？
+5. 根據 CDC/ECDC 的分類標準，是否有任何樣本符合多重抗藥性 (MDR) 或廣泛抗藥性 (XDR) 的定義？
+6. 根據藥物推薦表，是否有沒有推薦藥物的樣本？這些樣本可能需要進一步進行表現型抗生素感受性試驗嗎？
+7. 某些 AMR 基因是否與特定物種高度共現？（例如 NDM 與克雷伯氏菌、ermB 與鏈球菌）？
+8. 是否存在指示消毒劑抗性的基因？（例如 qacE、mdfA、tolC 等），這些基因會影響感染管制措施嗎？
+9. 是否檢測到任何質體介導的 AMR 基因？它們是否構成高傳播風險？
+10. 是否有特定時間點 AMR 基因激增？這是否暗示在抗生素使用下的選擇壓力與傳播？
+11. 是否有任何 AMR 基因的覆蓋度低或比對品質差？這些結果是否需要人工審查或排除？
+ 
+📌 請以這些問題作為抗藥性分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
+ 
+原始 CSV 摘要：
 {csv_content}
 """
 }
