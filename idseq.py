@@ -915,24 +915,26 @@ TEMPLATE_MAP = {
     "Metagenomics": """
 請根據我上傳的 Metagenomics 分析相關檔案（包含 heatmap.csv 及其他數據），撰寫一份結構完整、專業的 Metagenomics 分析報告。
 
+📌 重要背景說明：本分析的所有樣本皆來自「同一個病人」（可能為同時期/不同時期，或同部位/不同部位的檢體）。報告必須以單一個案追蹤（Case Study / Longitudinal & Multi-site tracking）的角度出發，探討病程進展、治療前後變化或不同部位間的微生物相差異，切勿將其視為不同病人的群體橫斷性研究。
+
 請依照以下結構進行分析與撰寫：
 
 1. 執行摘要 (Executive Summary)
-   - 總結本次分析的核心發現、樣本概況與主要生物學結論。
+   - 總結本次個案分析的核心發現、樣本概況（採檢時間點與部位）與主要生物學結論。
 
 2. 物種組成與豐度分析 (Taxonomic Composition & Abundance)
    - 解析上傳數據中的核心物種組成（如門、科、屬、種等層級）。
-   - 點出豐度最高、最具代表性的優勢菌群（Top Taxa）。
+   - 點出各樣本中豐度最高、最具代表性的優勢菌群（Top Taxa），並比較其在不同時間或部位的變化趨勢。
 
 3. 樣本分群與熱圖解讀 (Heatmap & Clustering Analysis)
-   - 針對 heatmap.csv 的數據結構，解讀樣本之間的聚類關係、相似性與差異性。
-   - 指出不同樣本或組別之間顯著的微生物分佈特徵或 Biomarkers。
+   - 針對 heatmap.csv 的數據結構，解讀該病人在不同時間點或部位之間的聚類關係、相似性與動態差異性。
+   - 指出不同採檢時間點或部位之間顯著的微生物分佈轉變或優勢菌株位移。
 
 4. 生態與生物學意義推論 (Biological & Ecological Insights)
-   - 結合檢出的微生物組成，推論其潛在的環境特性、功能性或對宿主/樣本的影響。
+   - 結合檢出的微生物組成，推論其在該病人體內的潛在臨床意義、病理特徵或對治療反應的影響。
 
 5. 結論與後續建議 (Conclusion & Next Steps)
-   - 總結分析亮點，並提出後續可以進一步探討的分析方向（例如：Alpha/Beta 多樣性分析、功能基因預測等）。
+   - 總結分析亮點，並提出針對該病人後續臨床追蹤或進一步分析的方向（例如：Alpha/Beta 多樣性變化、功能基因預測等）。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
@@ -945,26 +947,30 @@ TEMPLATE_MAP = {
 {csv_content}
 """,
     "Consensus Genome": """
-請根據我所提供的三個 IDSEQ Consensus Genome 分析結果檔案，為我撰寫一份詳盡且專業的 Consensus Genome 分析報告。報告內容必須具體、深入，並涵蓋以下專業維度與結構：
+請根據我所提供的三個 IDSEQ Consensus Genome 分析結果檔案，為我撰寫一份詳盡且專業的 Consensus Genome 分析報告。
+
+📌 重要背景說明：本分析的所有檢體皆來自「同一個病人」（可能為同時期/不同時期，或同部位/不同部位）。報告必須聚焦於病原體在該病人體內的演化、持續感染或不同部位的分佈情形。
+
+報告內容必須具體、深入，並涵蓋以下專業維度與結構：
 
 1. 執行摘要 (Executive Summary)
    - 總結本次檢體高通量定序（mNGS）與 Consensus Genome (IDSEQ) 分析的核心發現。
-   - 點出主要的病原體檢出結果及其臨床或流行病學意義。
+   - 點出主要檢出的病原體及其在不同時間點或部位的臨床意義。
 
 2. 樣本與定序品質控制 (Sample & Sequencing Quality Control)
-   - 評估總讀數（Total Reads）、過濾後讀數（Passing Filters）及比對率（Mapping Statistics）。
+   - 評估各樣本的總讀數（Total Reads）、過濾後讀數（Passing Filters）及比對率（Mapping Statistics）。
    - 分析宿主背景基因序列（Host background）佔比及對病原體檢出靈敏度的影響。
 
 3. 病原體鑒定與詳情 (Pathogen Identification & Profiling)
-   - 詳細列出檢出的病毒/細菌/真菌病原體及其相對豐度（RPM / rPM / Reads per million）。
-   - 針對主要目標病原體，分析其基因體覆蓋率（Genome Coverage）與平均定序深度（Mean Depth）。
+   - 詳細列出檢出的病毒/細菌/真菌病原體及其在各樣本中的相對豐度（RPM / rPM / Reads per million）。
+   - 針對主要目標病原體，分析其基因體覆蓋率（Genome Coverage）與平均定序深度（Mean Depth）在不同檢體間的差異。
    - 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
 
-4. 系統發生與變異分析 (Phylogenetic & Variant Analysis - 若適用)
-   - 根據 Consensus Genome 的變異位點，探討其基因型（Genotype）、亞型（Subtype）或抗藥性/毒力相關位點的初步線索。
+4. 系統發生與變異分析 (Phylogenetic & Variant Analysis - 追蹤病原體演化)
+   - 比較不同時間點或不同部位檢體中 Consensus Genome 的變異位點，探討病原體在病人體內的基因型（Genotype）、亞型（Subtype）演化，或抗藥性/毒力相關位點的突變漂移（Mutation drift）。
 
 5. 總結與建議 (Conclusion & Recommendations)
-   - 綜合評估定序結果的可靠度，並提出後續實驗驗證（如 RT-qPCR、Sanger 定序）或進一步生物資訊學分析的建議。
+   - 綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）或臨床處置提出建議。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
@@ -979,20 +985,22 @@ TEMPLATE_MAP = {
     "Antimicrobial Resistance": """
 請依據我所上傳的三個檔案（包含 sample_metadata.csv 以及相關的抗藥性基因與病原體檢測報表），為我撰寫一份結構完整、專業的 IDSEQ 抗藥性分析報告。
 
+📌 重要背景說明：本分析的所有檢體皆來自「同一個病人」（可能為治療前後的不同時期，或不同採檢部位）。報告必須探討抗藥性基因在該病人治療過程中的動態變化，或不同部位間抗藥性特徵的差異。
+
 請直接從上傳的檔案內容中萃取數據進行分析與整合。
 
 報告請包含以下幾個核心區段：
 
 1. 樣本概況與中繼資料摘要 (Sample Metadata & Overview)：
-   - 摘要 sample_metadata.csv 中的關鍵樣本資訊、分組與相關實驗/臨床特徵。
+   - 摘要 sample_metadata.csv 中的關鍵樣本資訊（如採檢時間點、部位、用藥史等臨床特徵）。
 2. 主要病原體識別 (Pathogen Identification)：
-   - 根據檢測結果列出樣本中主要的病原微生物及其相對豐度或檢出情形。
+   - 根據檢測結果列出該病人在不同檢體中主要的病原微生物及其相對豐度或檢出情形的動態變化。
 3. 抗藥性基因 (ARGs) 與抗生素關聯分析 (Antimicrobial Resistance Profile)：
-   - 整理偵測到的抗藥性基因，對應其所抵抗的抗生素類別（如 Beta-lactams、Aminoglycosides 等）、基因覆蓋率或相關指標。
+   - 整理在不同時間點或部位偵測到的抗藥性基因，對應其所抵抗的抗生素類別（如 Beta-lactams、Aminoglycosides 等）、基因覆蓋率的變化。
 4. 綜合風險評估與臨床意涵 (Clinical & Public Health Implications)：
-   - 綜合病原體與抗藥性基因結果，評估潛在的抗藥性風險。
+   - 綜合病原體與抗藥性基因結果，評估該病人體內抗藥性突變或抗藥菌株清除/篩選的潛在風險（例如：治療壓力下的抗藥性演變）。
 5. 後續建議 (Recommendations)：
-   - 針對檢測結果提出後續實驗驗證或臨床處置的建議。
+   - 針對該病人的檢測結果，提出後續實驗驗證或臨床抗生素調整的處置建議。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
