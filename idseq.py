@@ -935,16 +935,28 @@ TEMPLATE_MAP = {
 {csv_content}
 """,
     "Consensus Genome": """
-您是一位病毒基因體學分析專家。請根據一致性基因體 (Consensus Genome) 比對與品管 (QC) 統計數據，提供專業見解：
- 
-1. 此樣本中的病毒是否具有完整的一致性基因體？其覆蓋度與深度是否足以進行變異分析？
-2. 與參考病毒株相比，存在哪些 SNPs 或 INDELs？這些突變可能位於哪些基因區域？
-3. 此樣本是否屬於已知病毒株的譜系 (lineage)？它會不會是新的變異株？
-4. 觀察到的突變是否與已知的免疫逃脫、傳染力增加或藥物抗性相關？
-5. 是否存在類似已知高風險變異株（例如 XBB.1.5、BA.2.86）的突變？
-6. 此樣本的一致性基因體是否完整到足以進行公共衛生通報或資料庫提交（例如 GISAID）？
-7. 哪些樣本應該重新定序？（例如低覆蓋度、過多的 N 鹼基、僅覆蓋部分片段）？
-8. 是否需要進一步確認特定突變的準確性？（例如在低深度或低複雜度區域）？
+請根據我所提供的三個 IDSEQ Consensus Genome 分析結果檔案，為我撰寫一份詳盡且專業的 Consensus Genome 分析報告。報告內容必須具體、深入，並涵蓋以下專業維度與結構：
+
+1. 執行摘要 (Executive Summary)
+   - 總結本次檢體高通量定序（mNGS）與 Consensus Genome (IDSEQ) 分析的核心發現。
+   - 點出主要的病原體檢出結果及其臨床或流行病學意義。
+
+2. 樣本與定序品質控制 (Sample & Sequencing Quality Control)
+   - 評估總讀數（Total Reads）、過濾後讀數（Passing Filters）及比對率（Mapping Statistics）。
+   - 分析宿主背景基因序列（Host background）佔比及對病原體檢出靈敏度的影響。
+
+3. 病原體鑒定與詳情 (Pathogen Identification & Profiling)
+   - 詳細列出檢出的病毒/細菌/真菌病原體及其相對豐度（RPM / rPM / Reads per million）。
+   - 針對主要目標病原體，分析其基因體覆蓋率（Genome Coverage）與平均定序深度（Mean Depth）。
+   - 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
+
+4. 系統發生與變異分析 (Phylogenetic & Variant Analysis - 若適用)
+   - 根據 Consensus Genome 的變異位點，探討其基因型（Genotype）、亞型（Subtype）或抗藥性/毒力相關位點的初步線索。
+
+5. 總結與建議 (Conclusion & Recommendations)
+   - 綜合評估定序結果的可靠度，並提出後續實驗驗證（如 RT-qPCR、Sanger 定序）或進一步生物資訊學分析的建議。
+
+請確保內容基於上傳的檔案數據進行客觀分析與整合，不得省略實質數據與專業推論。請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
  
 📌 請以這些問題作為一致性基因體分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
  
