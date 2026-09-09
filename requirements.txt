@@ -11,3 +11,4 @@ faiss-cpu>=1.7.4
 huggingface-hub>=0.20.3
 sentence-transformers>=2.6.1
 langchain-text-splitters
+torchvision
