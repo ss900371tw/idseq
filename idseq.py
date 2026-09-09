@@ -1479,7 +1479,7 @@ def main():
                     payload = {
                         "grant_type": "authorization_code",
                         "code": code_param,
-                        "redirect_uri": "http://localhost:8501/",
+                        "redirect_uri": "https://idseqtool.streamlit.app/",
                         "client_id": "idseq_streamlit_app"
                     }
                     resp = requests.post(token_endpoint, data=payload, timeout=5)
