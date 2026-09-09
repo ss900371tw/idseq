@@ -1346,24 +1346,23 @@ def main():
             if launch_param:
                 st.session_state.launch_id = launch_param
                 client_id = "idseq_streamlit_app"
-                # 💡 確保這裡填入你的雲端正式網址 (或本機網址)
-                redirect_uri = "https://idseqtool.streamlit.app/" 
+                redirect_uri = "https://idseqtool.streamlit.app/"
                 scopes = "launch patient/*.read patient/*.write openid fhirUser"
-                
-                # 💡 必須加上 &aud={iss_param} 避免 Missing aud parameter 錯誤
-                auth_redirect_url = f"{auth_endpoint}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scopes}&state=idseq_state&launch={launch_param}&aud={iss_param}"
+                auth_redirect_url = f"{auth_endpoint}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scopes}&state=idseq_state&launch={launch_param}"
                 
                 st.warning("🔄 檢測到來自 EHR 系統的 SMART on FHIR 啟動請求！")
                 st.link_button("🔑 授權連線並登入 EHR 系統", auth_redirect_url)
                 st.stop()
         else:
-            # 2. 軌道 B：本地無驗證 FHIR 伺服器模擬啟動
+            # 2. 軌道 B：本地無驗證 FHIR 伺服器模擬啟動 (解決本機 HAPI FHIR 報錯)
             st.sidebar.info("🔌 已偵測到免驗證本地 FHIR 伺服器...")
             if patient_param:
                 st.session_state.fhir_patient_id = patient_param
                 p_demo = get_fhir_patient_demographics(iss_param, patient_param)
                 if p_demo:
                     st.session_state.active_patient_demographics = p_demo
+            else:
+                st.sidebar.warning("💡 請在網址尾端加入 `&patient=病患ID`（如：`&patient=12212`）以模擬自動帶入病患。")
 
     elif code_param and state_param == "idseq_state":
         if "token_endpoint" in st.session_state:
@@ -1373,8 +1372,7 @@ def main():
                     payload = {
                         "grant_type": "authorization_code",
                         "code": code_param,
-                        # 💡 必須與上面發送時的 redirect_uri 完全一致
-                        "redirect_uri": "https://idseqtool.streamlit.app/",
+                        "redirect_uri": "http://localhost:8501/",
                         "client_id": "idseq_streamlit_app"
                     }
                     resp = requests.post(token_endpoint, data=payload, timeout=5)
