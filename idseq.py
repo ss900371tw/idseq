@@ -1328,6 +1328,7 @@ def main():
         st.session_state.uploaded_files_dict = {}
 
     # ---------- 處理 EHR 啟動參數 (SMART Launch / Unsecured Fallback) ----------
+    
     iss_param = get_query_param("iss")
     launch_param = get_query_param("launch")
     patient_param = get_query_param("patient")
