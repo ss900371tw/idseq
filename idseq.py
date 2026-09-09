@@ -1345,7 +1345,7 @@ def main():
             if launch_param:
                 st.session_state.launch_id = launch_param
                 client_id = "idseq_streamlit_app"
-                redirect_uri = "http://localhost:8501/"
+                redirect_uri = "https://idseqtool.streamlit.app/"
                 scopes = "launch patient/*.read patient/*.write openid fhirUser"
                 auth_redirect_url = f"{auth_endpoint}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scopes}&state=idseq_state&launch={launch_param}"
                 
