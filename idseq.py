@@ -1177,62 +1177,62 @@ def check_filename_matches(expected_label, actual_filename):
     return all(keyword in filename_lower for keyword in expected_keywords)
 
 
-def render_mode_card(icon, title, desc, key):
-    selected = st.session_state.get("selected_mode") == title
-    border = "4px solid #219ebc" if selected else "2px solid #ccc"
-    shadow = "0 0 15px #219ebc" if selected else "none"
-    bg = "#f0faff" if selected else "#ffffff"
-    text_color = "#003049"
+# def render_mode_card(icon, title, desc, key):
+#     selected = st.session_state.get("selected_mode") == title
+#     border = "4px solid #219ebc" if selected else "2px solid #ccc"
+#     shadow = "0 0 15px #219ebc" if selected else "none"
+#     bg = "#f0faff" if selected else "#ffffff"
+#     text_color = "#003049"
 
-    with st.container():
-        st.markdown(f"""
-        <style>
-        div#{key}_card {{
-            background-color: {bg};
-            color: {text_color};
-            border-radius: 12px;
-            border: {border};
-            box-shadow: {shadow};
-            padding: 1.5rem;
-            height: 300px;
-            text-align: center;
-            transition: all 0.2s ease;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }}
-        div#{key}_card:hover {{
-            transform: scale(1.03);
-            box-shadow: 0 0 20px #219ebc;
-        }}
-        div[data-testid="stButton"] > button#{key}_btn {{
-            background-color: #219ebc;
-            color: white;
-            font-weight: bold;
-            border: none;
-            border-radius: 6px;
-            font-size: 1rem;
-            height: 40px;
-            padding: 0 1.2rem;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
+#     with st.container():
+#         st.markdown(f"""
+#         <style>
+#         div#{key}_card {{
+#             background-color: {bg};
+#             color: {text_color};
+#             border-radius: 12px;
+#             border: {border};
+#             box-shadow: {shadow};
+#             padding: 1.5rem;
+#             height: 300px;
+#             text-align: center;
+#             transition: all 0.2s ease;
+#             display: flex;
+#             flex-direction: column;
+#             justify-content: space-between;
+#         }}
+#         div#{key}_card:hover {{
+#             transform: scale(1.03);
+#             box-shadow: 0 0 20px #219ebc;
+#         }}
+#         div[data-testid="stButton"] > button#{key}_btn {{
+#             background-color: #219ebc;
+#             color: white;
+#             font-weight: bold;
+#             border: none;
+#             border-radius: 6px;
+#             font-size: 1rem;
+#             height: 40px;
+#             padding: 0 1.2rem;
+#         }}
+#         </style>
+#         """, unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div id="{key}_card">
-            <div style="font-size: 1.8rem;">{icon}</div>
-            <div style="font-size: 1.6rem; font-weight: bold;">{title}</div>
-            <div style="font-size: 1.3rem; color: #444;">{desc}</div>
-            <div style="margin-top: 10px;">
-        """, unsafe_allow_html=True)
+#         st.markdown(f"""
+#         <div id="{key}_card">
+#             <div style="font-size: 1.8rem;">{icon}</div>
+#             <div style="font-size: 1.6rem; font-weight: bold;">{title}</div>
+#             <div style="font-size: 1.3rem; color: #444;">{desc}</div>
+#             <div style="margin-top: 10px;">
+#         """, unsafe_allow_html=True)
 
-        if st.button("選擇", key=f"{key}_btn"):
-            if st.session_state.get("selected_mode") != title:
-                st.session_state.uploaded_files_dict = {}
-                st.session_state.gemini_analysis_result = None
-                st.session_state.fhir_json_preview = None
-            st.session_state.selected_mode = title  # ❗不用 rerun()
-        st.markdown("</div></div>", unsafe_allow_html=True)
+#         if st.button("選擇", key=f"{key}_btn"):
+#             if st.session_state.get("selected_mode") != title:
+#                 st.session_state.uploaded_files_dict = {}
+#                 st.session_state.gemini_analysis_result = None
+#                 st.session_state.fhir_json_preview = None
+#             st.session_state.selected_mode = title  # ❗不用 rerun()
+#         st.markdown("</div></div>", unsafe_allow_html=True)
 
             
 def select_mode(title):
@@ -1243,65 +1243,173 @@ def select_mode(title):
         st.session_state.fhir_json_preview = None
     st.session_state.selected_mode = title
 
+# def render_mode_card(icon, title, desc, key):
+#     selected = st.session_state.get("selected_mode") == title
+#     bg = "#219ebc" if selected else "#ffffff"
+#     text_color = "#ffffff" if selected else "#003049"
+#     desc_color = "#e0f7ff" if selected else "#333333"
+#     border = "4px solid #219ebc" if selected else "2px solid #ccc"
+#     shadow = "0 0 25px #219ebc" if selected else "none"
+
+#     st.markdown(f"""
+#     <style>
+#     div#{key}_card {{
+#         background-color: {bg};
+#         color: {text_color};
+#         border: {border};
+#         border-radius: 16px;
+#         box-shadow: {shadow};
+#         padding: 1.5rem;
+#         height: 300px;
+#         text-align: center;
+#         transition: all 0.25s ease;
+#         display: flex;
+#         flex-direction: column;
+#         justify-content: space-between;
+#     }}
+#     div#{key}_card:hover {{
+#         transform: scale(1.03);
+#         box-shadow: 0 0 30px #219ebc;
+#     }}
+#     div[data-testid="stButton"] > button#{key}_btn {{
+#         background-color: white;
+#         color: #219ebc;
+#         font-weight: bold;
+#         border: none;
+#         border-radius: 8px;
+#         font-size: 1rem;
+#         height: 40px;
+#         padding: 0 1.5rem;
+#         transition: background-color 0.2s;
+#     }}
+#     div[data-testid="stButton"] > button#{key}_btn:hover {{
+#         background-color: #d0f0ff;
+#         cursor: pointer;
+#     }}
+#     </style>
+#     """, unsafe_allow_html=True)
+
+#     st.markdown(f"""
+#     <div id="{key}_card">
+#         <header style="font-size: 2rem;">{icon}</header>
+#         <div style="font-size: 1.5rem; font-weight: bold;">{title}</div>
+#         <div style="font-size: 1.1rem; color: {desc_color}; margin-top: 0.5rem;">{desc}</div>
+#         <div style="margin-top: auto;">
+#     """, unsafe_allow_html=True)
+
+#     # ✅ 正確更新狀態並立刻影響 UI
+#     if st.button("選擇", key=f"{key}_btn", on_click=select_mode, args=(title,)):
+#         pass
+
+#     st.markdown("</div></div>", unsafe_allow_html=True)
+
+
 def render_mode_card(icon, title, desc, key):
     selected = st.session_state.get("selected_mode") == title
-    bg = "#219ebc" if selected else "#ffffff"
-    text_color = "#ffffff" if selected else "#003049"
-    desc_color = "#e0f7ff" if selected else "#333333"
-    border = "4px solid #219ebc" if selected else "2px solid #ccc"
-    shadow = "0 0 25px #219ebc" if selected else "none"
 
-    st.markdown(f"""
-    <style>
-    div#{key}_card {{
-        background-color: {bg};
-        color: {text_color};
-        border: {border};
-        border-radius: 16px;
-        box-shadow: {shadow};
-        padding: 1.5rem;
-        height: 300px;
-        text-align: center;
-        transition: all 0.25s ease;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-    }}
-    div#{key}_card:hover {{
-        transform: scale(1.03);
-        box-shadow: 0 0 30px #219ebc;
-    }}
-    div[data-testid="stButton"] > button#{key}_btn {{
-        background-color: white;
-        color: #219ebc;
-        font-weight: bold;
-        border: none;
-        border-radius: 8px;
-        font-size: 1rem;
-        height: 40px;
-        padding: 0 1.5rem;
-        transition: background-color 0.2s;
-    }}
-    div[data-testid="stButton"] > button#{key}_btn:hover {{
-        background-color: #d0f0ff;
-        cursor: pointer;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
+    # -----------------------------
+    # 卡片 CSS
+    # -----------------------------
+    border = "4px solid #219ebc" if selected else "2px solid #cccccc"
+    shadow = "0 0 15px rgba(33, 158, 188, 0.45)" if selected else "none"
+    bg = "#f0faff" if selected else "#ffffff"
 
-    st.markdown(f"""
-    <div id="{key}_card">
-        <header style="font-size: 2rem;">{icon}</header>
-        <div style="font-size: 1.5rem; font-weight: bold;">{title}</div>
-        <div style="font-size: 1.1rem; color: {desc_color}; margin-top: 0.5rem;">{desc}</div>
-        <div style="margin-top: auto;">
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <style>
 
-    # ✅ 正確更新狀態並立刻影響 UI
-    if st.button("選擇", key=f"{key}_btn", on_click=select_mode, args=(title,)):
-        pass
+        /* 只控制這一張 card button */
+        .st-key-{key}_btn button {{
+            width: 100% !important;
+            height: 300px !important;
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
+            background-color: {bg} !important;
+            color: #003049 !important;
+
+            border: {border} !important;
+            border-radius: 12px !important;
+
+            box-shadow: {shadow} !important;
+
+            padding: 1.5rem !important;
+            margin: 0 !important;
+
+            transition: all 0.2s ease !important;
+
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+
+            cursor: pointer !important;
+        }}
+
+        /* Hover */
+        .st-key-{key}_btn button:hover {{
+            background-color: #f0faff !important;
+            border: 4px solid #219ebc !important;
+            box-shadow: 0 0 20px rgba(33, 158, 188, 0.6) !important;
+            transform: scale(1.03);
+        }}
+
+        /* 點擊時 */
+        .st-key-{key}_btn button:active {{
+            transform: scale(0.99);
+        }}
+
+        /* button 裡面的文字 */
+        .st-key-{key}_btn button p {{
+            white-space: pre-wrap !important;
+            text-align: center !important;
+
+            font-size: 1.25rem !important;
+            line-height: 1.8 !important;
+            font-weight: normal !important;
+
+            color: #003049 !important;
+        }}
+
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------
+    # 按鈕內容
+    #
+    # icon
+    # title
+    # desc
+    # 全部都是按鈕本身的一部分
+    # -----------------------------
+    button_text = (
+        f"**{icon}**  \n"
+        f"**{title}**  \n"
+        f"{desc}"
+    )
+
+    # 整張 button 就是卡片
+    clicked = st.button(
+        button_text,
+        key=f"{key}_btn",
+        width="stretch",
+        wrap=True,
+    )
+
+    # -----------------------------
+    # 點擊卡片
+    # -----------------------------
+    if clicked:
+
+        # 如果切換到不同模式，清除舊資料
+        if st.session_state.get("selected_mode") != title:
+            st.session_state.uploaded_files_dict = {}
+            st.session_state.gemini_analysis_result = None
+            st.session_state.fhir_json_preview = None
+
+        st.session_state.selected_mode = title
+
+        # Streamlit button 本身點擊後會 rerun，
+        # 這裡不需要額外 st.rerun()
 
 
 
@@ -1345,7 +1453,7 @@ def main():
             if launch_param:
                 st.session_state.launch_id = launch_param
                 client_id = "idseq_streamlit_app"
-                redirect_uri = "https://idseqtool.streamlit.app/"
+                redirect_uri = "http://localhost:8501/"
                 scopes = "launch patient/*.read patient/*.write openid fhirUser"
                 auth_redirect_url = f"{auth_endpoint}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scopes}&state=idseq_state&launch={launch_param}"
                 
@@ -1707,7 +1815,7 @@ def main():
                         border-left:6px solid #1f77b4;margin-bottom:1rem;">
                 <h4 style="margin-bottom:0.8rem;">📄 Gemini 分析結果</h4>
                 <pre style="white-space:pre-wrap;font-size:0.92rem;font-family:inherit;">
-{st.session_state.gemini_analysis_result}</pre></div>""", unsafe_allow_html=True)
+                {st.session_state.gemini_analysis_result}</pre></div>""", unsafe_allow_html=True)
 
             # 判斷要儲存在哪個 FHIR 病患下
             save_patient_id = None
