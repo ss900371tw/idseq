@@ -855,8 +855,8 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
         except Exception:
             pass
 
-    # 如果查詢和患者診斷中都無匹配，則從上傳檔案的 CSV 內容中尋找關鍵字
-    if not matched_terms and file_contents:
+    # 掃描上傳檔案的 CSV 內容
+    if file_contents:
         file_text = " ".join(str(val) for val in file_contents.values()).lower()
         for term in candidate_terms:
             if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
