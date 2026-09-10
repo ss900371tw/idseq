@@ -499,7 +499,7 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
         }
         payload = {
             "request_id": req_id,
-            "encounter_type": "outpatient",
+            # "encounter_type": "outpatient",
             "raw_clinical_note": report_markdown,
             "output_format": "simple",
         }
@@ -685,7 +685,13 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             # 確保 Patient subject 參考正確無誤
             if "subject" in res_dict and isinstance(res_dict["subject"], dict):
                 res_dict["subject"]["reference"] = f"Patient/{patient_id}"
+
+            if "encounter" in res_dict:
+                res_dict.pop("encounter", None)
                 
+            if "encounter" in res_dict:
+                res_dict.pop("encounter", None)
+            
             # 嚴格的三大編碼系統限制
             allowed_systems = {
                 "http://snomed.info/sct",
@@ -738,7 +744,7 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
                 "resource": res_dict,
                 "request": {
                     "method": "POST",
-                    "url": res_type
+                    "url": res_dict["resourceType"]
                 }
             })
             
@@ -756,11 +762,11 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
     """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
     try:
-        # 如果是 Transaction/Batch Bundle，則 POST 到 FHIR 伺服器基底路徑 URL 以觸發伺服器拆解並分別儲存為一等資源
         if resource_type == "Bundle" and resource_json.get("type") in ["transaction", "batch"]:
-            url = server_url.rstrip('/')
+            url = server_url.rstrip("/")
         else:
             url = f"{server_url.rstrip('/')}/{resource_type}"
+
         headers = {
             "Content-Type": "application/fhir+json",
             "Accept": "application/fhir+json"
@@ -1481,7 +1487,7 @@ def render_mode_card(icon, title, desc, key):
 
 def main():
     st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
-    st.title("🧬 SentinEID：一體化「基因體至床邊」新興感染症 AI 監測與臨床精準決策支援平台") 
+    st.title("🧬 Gemini IDSEQ 分析儀表板") 
 
     # ---------- 初始化 SMART on FHIR 狀態變數 ----------
     if "fhir_url" not in st.session_state:
@@ -1882,12 +1888,36 @@ def main():
                 with st.expander("🌐 知識圖譜 (MetagenomicKG) 實時檢索證據 (Live Graph Evidence)", expanded=True):
                     st.markdown(st.session_state.kg_context_retrieved)
 
-            st.markdown(f"""
-            <div style="background-color:#f7f9fc;padding:1.2rem 1.5rem;border-radius:12px;
-                        border-left:6px solid #1f77b4;margin-bottom:1rem;">
-                <h4 style="margin-bottom:0.8rem;">📄 Gemini 分析結果</h4>
-                <pre style="white-space:pre-wrap;font-size:0.92rem;font-family:inherit;">
-                {st.session_state.gemini_analysis_result}</pre></div>""", unsafe_allow_html=True)
+            import textwrap
+            import markdown as md_lib
+            # 1. 先把 Gemini 回傳的 Markdown 明確轉成乾淨的 HTML
+            #    （extra: 支援表格/縮寫等；sane_lists: 清單行為更直覺；nl2br: 保留單行換行）
+            content_html = md_lib.markdown(
+                st.session_state.gemini_analysis_result,
+                extensions=["extra", "sane_lists", "nl2br"],
+            )
+
+            # 2. 標題 + 轉好的內容 HTML，一起包進同一個白底卡片，只呼叫一次 st.markdown
+            box_html = textwrap.dedent(f"""
+            <div style="
+                background-color: #f7f9fc;
+                padding: 1.2rem 1.5rem;
+                border-radius: 12px;
+                border-left: 6px solid #1f77b4;
+                margin-bottom: 1rem;
+                color: #1f2937;
+            ">
+                <h4 style="margin-top: 0; margin-bottom: 0.8rem; color: #1f2937 !important;">
+                    📄 Gemini 分析結果
+                </h4>
+                <div style="color: #1f2937 !important;">
+                    {content_html}
+                </div>
+            </div>
+            """)
+
+            st.markdown(box_html, unsafe_allow_html=True)
+
 
             # 判斷要儲存在哪個 FHIR 病患下
             save_patient_id = None
@@ -1932,14 +1962,14 @@ def main():
                             st.success("🎉 FHIR 轉換成功！")
                         except Exception as convert_err:
                             st.error(f"❌ FHIR 轉換失敗！這通常是因為您的 Gemini API 金鑰配置無效（例如填入了工研院 ITRI API 金鑰）、配額已滿，或是網路連線受阻。\n\n**原始錯誤訊息：** `{convert_err}`")
-                    st.rerun()
+                    # st.rerun()
 
                 # 預覽與儲存
                 if st.session_state.get("fhir_json_preview"):
                     st.markdown("#### 🔍 FHIR 格式預覽 (FHIR Resource Preview)")
-                    st.code(st.session_state.fhir_json_preview, language="json")
+                    st.code(st.session_state.fhir_json_preview, language="json",height=500,)
                     
-                    if st.button("💾 儲存至 FHIR (Save to FHIR)"):
+                    if st.button("💾 上傳至 FHIR server (Save to FHIR server)"):
                         with st.spinner("正在上傳報告至 FHIR 伺服器..."):
                             import json
                             try:
