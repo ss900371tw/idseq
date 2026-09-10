@@ -12,3 +12,4 @@ huggingface-hub>=0.20.3
 sentence-transformers>=2.6.1
 langchain-text-splitters
 torchvision
+neo4j
