@@ -1465,7 +1465,7 @@ def render_mode_card(icon, title, desc, key):
 
 def main():
     st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
-    st.title("🧬 Gemini IDSEQ 分析儀表板") 
+    st.title("🧬 SentinEID：一體化「基因體至床邊」新興感染症 AI 監測與臨床精準決策支援平台") 
 
     # ---------- 初始化 SMART on FHIR 狀態變數 ----------
     if "fhir_url" not in st.session_state:
