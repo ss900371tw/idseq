@@ -1805,7 +1805,7 @@ def main():
                 st.write(f"- {name}")
 
         # ✅ 按下按鈕才進行 Gemini 分析
-        if st.button("🚀 Gemini + RAG 開始分析"):
+        if st.button("🚀 開始分析"):
             st.session_state.fhir_json_preview = None
             uploaded_files_dict = st.session_state.uploaded_files_dict
             
