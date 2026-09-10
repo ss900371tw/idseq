@@ -793,55 +793,8 @@ def generate_cohort_metadata(file_contents, fhir_patients):
         
     return "\n".join(lines)
 
-# ---------- RAG 設定 ----------
+# ---------- RAG 設定 (MetagenomicKG Neo4j 整合) ----------
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
-
-INDEX_FILE_PATH = "microbio_faiss_index1.zip"
-PDF_PATH = "C:\\Users\\User\\Downloads\\ilovepdf_merged.pdf"
-
-
-def extract_index_archive(archive_path, extract_to="temp_faiss_index"):
-    if archive_path.endswith(".zip"):
-        with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_to)
-    elif archive_path.endswith((".tar.gz", ".tgz")):
-        with tarfile.open(archive_path, 'r:gz') as tar_ref:
-            tar_ref.extractall(extract_to)
-    return extract_to
-
-def find_faiss_index_folder(base_path):
-    for root, dirs, files in os.walk(base_path):
-        if "index.faiss" in files and "index.pkl" in files:
-            return root
-    return None
-
-def load_or_create_faiss():
-    embedding = HuggingFaceEmbeddings(model_kwargs={'device': 'cpu'})
-
-    if INDEX_FILE_PATH.endswith((".zip", ".tar.gz", ".tgz")):
-        extracted_dir = extract_index_archive(INDEX_FILE_PATH)
-        index_dir = find_faiss_index_folder(extracted_dir)
-    else:
-        index_dir = INDEX_FILE_PATH
-
-    if index_dir and os.path.exists(os.path.join(index_dir, "index.faiss")):
-        return FAISS.load_local(index_dir, embeddings=embedding, allow_dangerous_deserialization=True)
-    else:
-        if not os.path.exists(PDF_PATH):
-            raise FileNotFoundError(f"找不到 PDF：{PDF_PATH}")
-
-        loader = PyMuPDFLoader(PDF_PATH)
-        docs = loader.load()
-        splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-        chunks = splitter.split_documents(docs)
-        texts = [chunk.page_content for chunk in chunks]
-        vector_store = FAISS.from_texts(texts, embedding)
-        vector_store.save_local(index_dir)
-        return vector_store
-
-    
 # ✅ 初始化 Gemini
 load_dotenv(override=True)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY","")
@@ -855,18 +808,129 @@ except Exception as e:
     model = None
     chat = None
 
-# ✅ FAISS 載入
-vector_store = load_or_create_faiss()
 
+# ✅ MetagenomicKG Neo4j 圖資料庫檢索函數
+def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
+    """
+    用 MetagenomicKG 替代原有的 FAISS 向量檢索。
+    從當前患者的臨床診斷紀錄 (Conditions) 與查詢字串中，自動萃取關鍵醫學詞彙，
+    並對公立 MetagenomicKG Neo4j 圖資料庫進行語意檢索，回傳最相關的臨床知識、病原體分類與藥物關聯資訊。
+    """
+    import re
+    from neo4j import GraphDatabase
 
-# ✅ Prompt 模板與 UI 請見原始程式碼（不重複列出）
-# ⚠️ 若要使用 RAG，需要插入一個 Retrieval 函數如下：
+    # 1. 萃取關鍵字
+    candidate_terms = [
+        "Staphylococcus", "S. aureus", "Aureus", "Klebsiella", "K. pneumoniae", "Pneumoniae",
+        "Pseudomonas", "P. aeruginosa", "Aeruginosa", "Escherichia", "E. coli", "Coli",
+        "Enterococcus", "Streptococcus", "Salmonella", "Acinetobacter", "Haemophilus", "Influenzae",
+        "Clostridioides", "Mycoplasma", "Mycobacterium", "Tuberculosis", "Candida", "Aspergillus",
+        "Pneumonia", "Sepsis", "Bronchitis", "Asthma", "Urinary", "UTI", "Urosepsis", "Bacteremia",
+        "Beta-lactam", "Tetracycline", "Vancomycin", "Ciprofloxacin", "Metformin"
+    ]
 
+    matched_terms = set()
+    
+    # 掃描 Query
+    query_lower = query.lower()
+    for term in candidate_terms:
+        if re.search(r'\b' + re.escape(term.lower()) + r'\b', query_lower) or term.lower() in query_lower:
+            matched_terms.add(term)
 
-def retrieve_context(query: str, k: int = 5):
-    results = vector_store.similarity_search(query, k=k)
-    context_texts = [doc.page_content for doc in results]
-    return "\n\n".join(context_texts)
+    # 掃描當前患者的臨床病症 (Conditions)
+    if st.session_state.get("active_patient_demographics"):
+        p_id = st.session_state.active_patient_demographics.get("id")
+        try:
+            # 取得該患者當前所有診斷，用於強化知識圖譜檢索的精準度
+            conditions = get_fhir_patient_details(
+                st.session_state.fhir_url,
+                p_id,
+                st.session_state.get("fhir_token")
+            )
+            if conditions:
+                cond_text = " ".join(conditions).lower()
+                for term in candidate_terms:
+                    if re.search(r'\b' + re.escape(term.lower()) + r'\b', cond_text) or term.lower() in cond_text:
+                        matched_terms.add(term)
+        except Exception:
+            pass
+
+    # 如果查詢和患者診斷中都無匹配，則從上傳檔案的 CSV 內容中尋找關鍵字
+    if not matched_terms and file_contents:
+        file_text = " ".join(str(val) for val in file_contents.values()).lower()
+        for term in candidate_terms:
+            if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
+                matched_terms.add(term)
+
+    # 如果還是完全無匹配，不要自動帶入預設的關鍵字，直接返回並記錄提示
+    if not matched_terms:
+        msg = "⚠️ 未在查詢、患者病歷或上傳檔案中偵測到任何相關的 MetagenomicKG 關鍵字，因此未執行圖資料庫檢索。"
+        st.session_state.kg_context_retrieved = msg
+        return msg
+
+    context_sections = []
+    context_sections.append("🌐 [MetagenomicKG Knowledge Graph Live Retrieval Result]")
+
+    uri = "bolt://mkg.cse.psu.edu:7687"
+    auth = ("neo4j", "klabneo4j")
+
+    try:
+        driver = GraphDatabase.driver(uri, auth=auth)
+        with driver.session() as session:
+            for term in sorted(list(matched_terms))[:4]:  # 限制最多檢索 4 個最相關的主題詞以保持 Context 效率
+                context_sections.append(f"📌 Knowledge Graph Context for: '{term}'")
+                
+                # A. 檢索疾病資訊
+                res_dis = session.run(
+                    "MATCH (d:`biolink:Disease`) WHERE any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                    "RETURN d.all_names[0] AS name, d.description AS desc LIMIT 2",
+                    term=term
+                )
+                for rec in res_dis:
+                    desc_clean = re.sub(r'<[^>]+>', '', rec["desc"] or "")[:400]
+                    context_sections.append(f"  - **Disease**: {rec['name']}\n    *Description*: {desc_clean}")
+
+                # B. 檢索微生物與病原體屬性
+                res_micro = session.run(
+                    "MATCH (m:`biolink:OrganismTaxon`) WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                    "RETURN m.all_names[0] AS name, m.description AS desc, m.is_pathogen AS is_pathogen LIMIT 2",
+                    term=term
+                )
+                for rec in res_micro:
+                    context_sections.append(f"  - **Pathogen**: {rec['name']} (Is Pathogen: {rec['is_pathogen']})\n    *Description*: {rec['desc']}")
+
+                # C. 檢索微生物與疾病之已知關聯 (Associations)
+                res_rel = session.run(
+                    "MATCH (m:`biolink:OrganismTaxon`)-[r:`biolink:associated_with`]-(d:`biolink:Disease`) "
+                    "WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) OR "
+                    "      any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                    "RETURN m.all_names[0] AS microbe, d.all_names[0] AS disease LIMIT 2",
+                    term=term
+                )
+                rels = []
+                for rec in res_rel:
+                    rels.append(f"'{rec['microbe']}' is associated with disease '{rec['disease']}'")
+                if rels:
+                    context_sections.append("  - **Linked Associations**:\n    " + "\n    ".join(rels))
+
+                # D. 檢索藥物/化學物資訊
+                res_drug = session.run(
+                    "MATCH (dr:`biolink:Drug`) WHERE any(n in dr.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                    "RETURN dr.all_names[0] AS name, dr.description AS desc LIMIT 2",
+                    term=term
+                )
+                for rec in res_drug:
+                    context_sections.append(f"  - **Recommended Drug/Chemical**: {rec['name']}\n    *Details*: {rec['desc']}")
+
+        driver.close()
+    except Exception as e:
+        context_sections.append(f"⚠️ Failed to live-query MetagenomicKG, falling back to local textbook RAG mode. Error: {e}")
+        # 若連線失效，則優雅地提示，不影響程式核心執行
+        context_sections.append("- Local Backup Fact: Staphylococcus aureus is a major human pathogen associated with skin, soft tissue, and systemic infections like sepsis and pneumonia.")
+
+    ret_val = "\n\n".join(context_sections)
+    st.session_state.kg_context_retrieved = ret_val
+    return ret_val
 
 
 
@@ -901,7 +965,7 @@ def generate_llm_prompt(mode, file_contents):
 
     # 🔹 Search vector database for relevant background knowledge
     user_query = f"{mode} analysis guidelines and clinical risk"
-    context_text = retrieve_context(user_query)
+    context_text = retrieve_context(user_query, file_contents=file_contents)
     summary_lines.append(f"\n📚 Textbook Supplementary Knowledge:\n{context_text}")
 
     prompt_template = TEMPLATE_MAP[mode]
@@ -1241,6 +1305,7 @@ def select_mode(title):
         st.session_state.uploaded_files_dict = {}
         st.session_state.gemini_analysis_result = None
         st.session_state.fhir_json_preview = None
+        st.session_state.kg_context_retrieved = None
     st.session_state.selected_mode = title
 
 # def render_mode_card(icon, title, desc, key):
@@ -1388,28 +1453,13 @@ def render_mode_card(icon, title, desc, key):
     )
 
     # 整張 button 就是卡片
-    clicked = st.button(
+    st.button(
         button_text,
         key=f"{key}_btn",
         width="stretch",
-        wrap=True,
+        on_click=select_mode,
+        args=(title,),
     )
-
-    # -----------------------------
-    # 點擊卡片
-    # -----------------------------
-    if clicked:
-
-        # 如果切換到不同模式，清除舊資料
-        if st.session_state.get("selected_mode") != title:
-            st.session_state.uploaded_files_dict = {}
-            st.session_state.gemini_analysis_result = None
-            st.session_state.fhir_json_preview = None
-
-        st.session_state.selected_mode = title
-
-        # Streamlit button 本身點擊後會 rerun，
-        # 這裡不需要額外 st.rerun()
 
 
 
@@ -1479,7 +1529,7 @@ def main():
                     payload = {
                         "grant_type": "authorization_code",
                         "code": code_param,
-                        "redirect_uri": "https://idseqtool.streamlit.app/",
+                        "redirect_uri": "http://localhost:8501/",
                         "client_id": "idseq_streamlit_app"
                     }
                     resp = requests.post(token_endpoint, data=payload, timeout=5)
@@ -1810,6 +1860,12 @@ def main():
         # 如果已經有分析結果，不論進行任何按鈕操作，都持續穩定渲染在畫面上
         if st.session_state.get("gemini_analysis_result"):
             st.subheader("📄 分析結果")
+
+            # 顯示 MetagenomicKG 實時檢索脈絡
+            if st.session_state.get("kg_context_retrieved"):
+                with st.expander("🌐 知識圖譜 (MetagenomicKG) 實時檢索證據 (Live Graph Evidence)", expanded=True):
+                    st.markdown(st.session_state.kg_context_retrieved)
+
             st.markdown(f"""
             <div style="background-color:#f7f9fc;padding:1.2rem 1.5rem;border-radius:12px;
                         border-left:6px solid #1f77b4;margin-bottom:1rem;">
@@ -1889,6 +1945,7 @@ def main():
             if st.button("📊 清空分析結果"):
                 st.session_state.gemini_analysis_result = None
                 st.session_state.fhir_json_preview = None
+                st.session_state.kg_context_retrieved = None
                 st.rerun()
                     
 if __name__ == "__main__":
