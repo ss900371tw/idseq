@@ -663,7 +663,13 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             "issued": now_str,
             "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR Pipeline (based on Apache cTAKES). Original note: {polished_note[:500]}..."
         }
-        standard_entries.append({"resource": diag_report})
+        standard_entries.append({
+            "resource": diag_report,
+            "request": {
+                "method": "POST",
+                "url": "DiagnosticReport"
+            }
+        })
         
         # 加入所有經由 cTAKES text2fhir Pipeline 自動產出的資源，並套用嚴格的 3-system 白名單與資源映射
         for res in resources:
@@ -728,11 +734,17 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             elif res_type == "Procedure" and "code" in res_dict:
                 clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
                 
-            standard_entries.append({"resource": res_dict})
+            standard_entries.append({
+                "resource": res_dict,
+                "request": {
+                    "method": "POST",
+                    "url": res_type
+                }
+            })
             
         fhir_bundle = {
             "resourceType": "Bundle",
-            "type": "collection",
+            "type": "transaction",
             "entry": standard_entries
         }
         return fhir_bundle
@@ -744,7 +756,11 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
     """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
     try:
-        url = f"{server_url.rstrip('/')}/{resource_type}"
+        # 如果是 Transaction/Batch Bundle，則 POST 到 FHIR 伺服器基底路徑 URL 以觸發伺服器拆解並分別儲存為一等資源
+        if resource_type == "Bundle" and resource_json.get("type") in ["transaction", "batch"]:
+            url = server_url.rstrip('/')
+        else:
+            url = f"{server_url.rstrip('/')}/{resource_type}"
         headers = {
             "Content-Type": "application/fhir+json",
             "Accept": "application/fhir+json"
@@ -877,7 +893,7 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
     try:
         driver = GraphDatabase.driver(uri, auth=auth)
         with driver.session() as session:
-            for term in sorted(list(matched_terms))[:10]:  # 限制最多檢索 4 個最相關的主題詞以保持 Context 效率
+            for term in sorted(list(matched_terms))[:4]:  # 限制最多檢索 4 個最相關的主題詞以保持 Context 效率
                 context_sections.append(f"📌 Knowledge Graph Context for: '{term}'")
                 
                 # A. 檢索疾病資訊
