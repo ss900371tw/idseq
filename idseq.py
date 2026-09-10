@@ -899,7 +899,7 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
     try:
         driver = GraphDatabase.driver(uri, auth=auth)
         with driver.session() as session:
-            for term in sorted(list(matched_terms))[:4]:  # 限制最多檢索 4 個最相關的主題詞以保持 Context 效率
+            for term in sorted(list(matched_terms))[:10]:  # 限制最多檢索 10 個最相關的主題詞以保持 Context 效率
                 context_sections.append(f"📌 Knowledge Graph Context for: '{term}'")
                 
                 # A. 檢索疾病資訊
