@@ -908,15 +908,17 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
         "Beta-lactam", "Tetracycline", "Vancomycin", "Ciprofloxacin", "Metformin"
     ]
 
-    matched_terms = set()
-    
-    # 掃描 Query
-    query_lower = query.lower()
-    for term in candidate_terms:
-        if re.search(r'\b' + re.escape(term.lower()) + r'\b', query_lower) or term.lower() in query_lower:
-            matched_terms.add(term)
+    matched_terms_list = []
 
-    # 掃描當前患者的臨床病症 (Conditions)
+    # A. 優先掃描上傳檔案的 CSV 內容
+    if file_contents:
+        file_text = " ".join(str(val) for val in file_contents.values()).lower()
+        for term in candidate_terms:
+            if term not in matched_terms_list:
+                if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
+                    matched_terms_list.append(term)
+
+    # B. 接著掃描當前患者的臨床病症 (Conditions / 臨床病歷)
     if st.session_state.get("active_patient_demographics"):
         p_id = st.session_state.active_patient_demographics.get("id")
         try:
@@ -929,20 +931,21 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
             if conditions:
                 cond_text = " ".join(conditions).lower()
                 for term in candidate_terms:
-                    if re.search(r'\b' + re.escape(term.lower()) + r'\b', cond_text) or term.lower() in cond_text:
-                        matched_terms.add(term)
+                    if term not in matched_terms_list:
+                        if re.search(r'\b' + re.escape(term.lower()) + r'\b', cond_text) or term.lower() in cond_text:
+                            matched_terms_list.append(term)
         except Exception:
             pass
 
-    # 掃描上傳檔案的 CSV 內容
-    if file_contents:
-        file_text = " ".join(str(val) for val in file_contents.values()).lower()
-        for term in candidate_terms:
-            if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
-                matched_terms.add(term)
+    # C. 最後掃描 Query (例如分析模式名稱)
+    query_lower = query.lower()
+    for term in candidate_terms:
+        if term not in matched_terms_list:
+            if re.search(r'\b' + re.escape(term.lower()) + r'\b', query_lower) or term.lower() in query_lower:
+                matched_terms_list.append(term)
 
     # 如果還是完全無匹配，不要自動帶入預設的關鍵字，直接返回並記錄提示
-    if not matched_terms:
+    if not matched_terms_list:
         msg = "⚠️ 未在查詢、患者病歷或上傳檔案中偵測到任何相關的 MetagenomicKG 關鍵字，因此未執行圖資料庫檢索。"
         st.session_state.kg_context_retrieved = msg
         return msg
@@ -956,7 +959,8 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
     try:
         driver = GraphDatabase.driver(uri, auth=auth)
         with driver.session() as session:
-            for term in sorted(list(matched_terms))[:10]:  # 限制最多檢索 10 個最相關的主題詞以保持 Context 效率
+            # 使用有序的 matched_terms_list，直接依據優先權順序（檔案 -> 病歷 -> Query）取出前 10 個
+            for term in matched_terms_list[:10]:  # 限制最多檢索 10 個最相關的主題詞以保持 Context 效率
                 context_sections.append(f"📌 Knowledge Graph Context for: '{term}'")
                 
                 # A. 檢索疾病資訊
