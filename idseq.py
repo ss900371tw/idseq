@@ -70,7 +70,7 @@ def discover_endpoints(iss):
     return None, None
 
 # ---------- SMART on FHIR：共用常數 ----------
-REDIRECT_URI = "https://announces-fathers-voice-postage.trycloudflare.com"  # "https://idseqtool.streamlit.app/"
+REDIRECT_URI = "https://idseqtool.streamlit.app"  # "https://idseqtool.streamlit.app/"
 CLIENT_ID = "idseq_streamlit_app"
 SCOPES = "launch patient/*.read patient/*.write openid fhirUser"
 
