@@ -23,6 +23,9 @@ from langchain_community.vectorstores import FAISS
 import requests
 import base64
 from datetime import datetime
+import secrets
+import hashlib
+from urllib.parse import urlencode
 
 DEFAULT_FHIR_URL = "http://localhost:8090/fhir"
 
@@ -65,6 +68,63 @@ def discover_endpoints(iss):
     except Exception:
         pass
     return None, None
+
+# ---------- SMART on FHIR：共用常數 ----------
+REDIRECT_URI = "https://announces-fathers-voice-postage.trycloudflare.com"  # "https://idseqtool.streamlit.app/"
+CLIENT_ID = "idseq_streamlit_app"
+SCOPES = "launch patient/*.read patient/*.write openid fhirUser"
+
+# ---------- PKCE 與跨頁面 OAuth state 暫存 ----------
+def generate_pkce_pair():
+    """產生 PKCE 用的 code_verifier 與 S256 code_challenge"""
+    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode("ascii")
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+@st.cache_resource
+def _oauth_state_store():
+    """process 層級的暫存區，不受單一瀏覽器 session 重置影響。
+    僅適合單一 process 部署（如 Streamlit Community Cloud 免費層）；
+    若之後改成多副本部署，請換成 Redis 或資料庫。"""
+    return {}
+
+def save_pending_oauth_state(state_key: str, data: dict):
+    _oauth_state_store()[state_key] = data
+
+def load_pending_oauth_state(state_key: str):
+    return _oauth_state_store().pop(state_key, None)
+
+# ---------- (可選) 用 fhirclient 封裝 OAuth2 + PKCE ----------
+from fhirclient import client as fhir_client
+from fhirclient.auth import FHIRAuth
+
+def build_smart_client(iss, auth_endpoint, token_endpoint, launch_param=None, state=None):
+    """建立 FHIRClient，並手動塞入我們自己 discover_endpoints() 找到的端點，
+    跳過 fhirclient 內建、只認舊式 CapabilityStatement 擴充的自動發現機制。"""
+    if state is not None:
+        smart = fhir_client.FHIRClient(state=state, save_func=lambda s: None)
+        return smart
+
+    settings = {
+        "app_id": CLIENT_ID,
+        "api_base": iss,
+        "redirect_uri": REDIRECT_URI,
+        "scope": SCOPES,
+    }
+    if launch_param:
+        settings["launch_token"] = launch_param
+
+    smart = fhir_client.FHIRClient(settings=settings, save_func=lambda s: None)
+    smart.server.auth = FHIRAuth.create("oauth2", state={
+        "app_id": CLIENT_ID,
+        "aud": iss,
+        "authorize_uri": auth_endpoint,
+        "token_uri": token_endpoint,
+        "redirect_uri": REDIRECT_URI,
+    })
+    return smart
 
 # ---------- 離線高品質模擬病患資料庫 (當 FHIR 伺服器斷線時自動啟用，確保 Streamlit Cloud 100% 可用) ----------
 MOCK_PATIENTS_DB = [
@@ -689,9 +749,6 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             if "encounter" in res_dict:
                 res_dict.pop("encounter", None)
                 
-            if "encounter" in res_dict:
-                res_dict.pop("encounter", None)
-            
             # 嚴格的三大編碼系統限制
             allowed_systems = {
                 "http://snomed.info/sct",
@@ -1262,64 +1319,6 @@ def check_filename_matches(expected_label, actual_filename):
     filename_lower = actual_filename.lower()
     return all(keyword in filename_lower for keyword in expected_keywords)
 
-
-# def render_mode_card(icon, title, desc, key):
-#     selected = st.session_state.get("selected_mode") == title
-#     border = "4px solid #219ebc" if selected else "2px solid #ccc"
-#     shadow = "0 0 15px #219ebc" if selected else "none"
-#     bg = "#f0faff" if selected else "#ffffff"
-#     text_color = "#003049"
-
-#     with st.container():
-#         st.markdown(f"""
-#         <style>
-#         div#{key}_card {{
-#             background-color: {bg};
-#             color: {text_color};
-#             border-radius: 12px;
-#             border: {border};
-#             box-shadow: {shadow};
-#             padding: 1.5rem;
-#             height: 300px;
-#             text-align: center;
-#             transition: all 0.2s ease;
-#             display: flex;
-#             flex-direction: column;
-#             justify-content: space-between;
-#         }}
-#         div#{key}_card:hover {{
-#             transform: scale(1.03);
-#             box-shadow: 0 0 20px #219ebc;
-#         }}
-#         div[data-testid="stButton"] > button#{key}_btn {{
-#             background-color: #219ebc;
-#             color: white;
-#             font-weight: bold;
-#             border: none;
-#             border-radius: 6px;
-#             font-size: 1rem;
-#             height: 40px;
-#             padding: 0 1.2rem;
-#         }}
-#         </style>
-#         """, unsafe_allow_html=True)
-
-#         st.markdown(f"""
-#         <div id="{key}_card">
-#             <div style="font-size: 1.8rem;">{icon}</div>
-#             <div style="font-size: 1.6rem; font-weight: bold;">{title}</div>
-#             <div style="font-size: 1.3rem; color: #444;">{desc}</div>
-#             <div style="margin-top: 10px;">
-#         """, unsafe_allow_html=True)
-
-#         if st.button("選擇", key=f"{key}_btn"):
-#             if st.session_state.get("selected_mode") != title:
-#                 st.session_state.uploaded_files_dict = {}
-#                 st.session_state.gemini_analysis_result = None
-#                 st.session_state.fhir_json_preview = None
-#             st.session_state.selected_mode = title  # ❗不用 rerun()
-#         st.markdown("</div></div>", unsafe_allow_html=True)
-
             
 def select_mode(title):
     # 若切換主題，重置已上傳檔案、舊分析報告與 FHIR 預覽
@@ -1329,66 +1328,6 @@ def select_mode(title):
         st.session_state.fhir_json_preview = None
         st.session_state.kg_context_retrieved = None
     st.session_state.selected_mode = title
-
-# def render_mode_card(icon, title, desc, key):
-#     selected = st.session_state.get("selected_mode") == title
-#     bg = "#219ebc" if selected else "#ffffff"
-#     text_color = "#ffffff" if selected else "#003049"
-#     desc_color = "#e0f7ff" if selected else "#333333"
-#     border = "4px solid #219ebc" if selected else "2px solid #ccc"
-#     shadow = "0 0 25px #219ebc" if selected else "none"
-
-#     st.markdown(f"""
-#     <style>
-#     div#{key}_card {{
-#         background-color: {bg};
-#         color: {text_color};
-#         border: {border};
-#         border-radius: 16px;
-#         box-shadow: {shadow};
-#         padding: 1.5rem;
-#         height: 300px;
-#         text-align: center;
-#         transition: all 0.25s ease;
-#         display: flex;
-#         flex-direction: column;
-#         justify-content: space-between;
-#     }}
-#     div#{key}_card:hover {{
-#         transform: scale(1.03);
-#         box-shadow: 0 0 30px #219ebc;
-#     }}
-#     div[data-testid="stButton"] > button#{key}_btn {{
-#         background-color: white;
-#         color: #219ebc;
-#         font-weight: bold;
-#         border: none;
-#         border-radius: 8px;
-#         font-size: 1rem;
-#         height: 40px;
-#         padding: 0 1.5rem;
-#         transition: background-color 0.2s;
-#     }}
-#     div[data-testid="stButton"] > button#{key}_btn:hover {{
-#         background-color: #d0f0ff;
-#         cursor: pointer;
-#     }}
-#     </style>
-#     """, unsafe_allow_html=True)
-
-#     st.markdown(f"""
-#     <div id="{key}_card">
-#         <header style="font-size: 2rem;">{icon}</header>
-#         <div style="font-size: 1.5rem; font-weight: bold;">{title}</div>
-#         <div style="font-size: 1.1rem; color: {desc_color}; margin-top: 0.5rem;">{desc}</div>
-#         <div style="margin-top: auto;">
-#     """, unsafe_allow_html=True)
-
-#     # ✅ 正確更新狀態並立刻影響 UI
-#     if st.button("選擇", key=f"{key}_btn", on_click=select_mode, args=(title,)):
-#         pass
-
-#     st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def render_mode_card(icon, title, desc, key):
@@ -1524,11 +1463,11 @@ def main():
             st.session_state.token_endpoint = token_endpoint
             if launch_param:
                 st.session_state.launch_id = launch_param
-                client_id = "idseq_streamlit_app"
-                redirect_uri = "https://idseqtool.streamlit.app/"
-                scopes = "launch patient/*.read patient/*.write openid fhirUser"
-                auth_redirect_url = f"{auth_endpoint}?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&scope={scopes}&state=idseq_state&launch={launch_param}"
-                
+
+                smart = build_smart_client(iss_param, auth_endpoint, token_endpoint, launch_param)
+                auth_redirect_url = smart.authorize_url          # aud/PKCE/state 全部自動處理好
+                save_pending_oauth_state(smart.server.auth.auth_state, smart.state)
+
                 st.warning("🔄 檢測到來自 EHR 系統的 SMART on FHIR 啟動請求！")
                 st.link_button("🔑 授權連線並登入 EHR 系統", auth_redirect_url)
                 st.stop()
@@ -1543,28 +1482,28 @@ def main():
             else:
                 st.sidebar.warning("💡 請在網址尾端加入 `&patient=病患ID`（如：`&patient=12212`）以模擬自動帶入病患。")
 
-    elif code_param and state_param == "idseq_state":
-        if "token_endpoint" in st.session_state:
-            token_endpoint = st.session_state.token_endpoint
+    elif code_param and state_param:
+        pending = load_pending_oauth_state(state_param)
+        if pending is None:
+            st.error("❌ 授權逾時或 state 驗證失敗，請重新從 EHR 啟動一次。")
+        else:
             with st.spinner("🔄 正在交換 EHR 授權 Token..."):
                 try:
-                    payload = {
-                        "grant_type": "authorization_code",
-                        "code": code_param,
-                        "redirect_uri": "http://localhost:8501/",
-                        "client_id": "idseq_streamlit_app"
-                    }
-                    resp = requests.post(token_endpoint, data=payload, timeout=5)
-                    if resp.status_code == 200:
-                        token_data = resp.json()
-                        st.session_state.fhir_token = token_data.get("access_token")
-                        st.session_state.fhir_patient_id = token_data.get("patient")
-                        p_demo = get_fhir_patient_demographics(st.session_state.fhir_url, st.session_state.fhir_patient_id, st.session_state.fhir_token)
-                        if p_demo:
-                            st.session_state.active_patient_demographics = p_demo
-                            st.success(f"🎉 成功連線！病患: {p_demo.get('name')} (ID: {p_demo.get('id')})")
-                    else:
-                        st.error(f"❌ Token 交換失敗: {resp.status_code} - {resp.text}")
+                    smart = build_smart_client(None, None, None, state=pending)
+                    callback_url = f"{REDIRECT_URI}?code={code_param}&state={state_param}"
+                    smart.handle_callback(callback_url)
+
+                    st.session_state.fhir_url = smart.server.base_uri
+                    st.session_state.fhir_token = smart.server.auth.access_token
+                    st.session_state.fhir_patient_id = smart.patient_id
+                    p_demo = get_fhir_patient_demographics(
+                        st.session_state.fhir_url,
+                        st.session_state.fhir_patient_id,
+                        st.session_state.fhir_token,
+                    )
+                    if p_demo:
+                        st.session_state.active_patient_demographics = p_demo
+                        st.success(f"🎉 成功連線！病患: {p_demo.get('name')} (ID: {p_demo.get('id')})")
                 except Exception as e:
                     st.error(f"❌ Token 交換出錯: {e}")
             st.query_params.clear()
