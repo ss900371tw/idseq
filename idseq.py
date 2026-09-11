@@ -1079,12 +1079,15 @@ TEMPLATE_MAP = {
 
 4. 生態與生物學意義推論 (Biological & Ecological Insights)
    - 結合檢出的微生物組成，推論其在該病人體內的潛在臨床意義、病理特徵或對治療反應的影響。
+   - ⚠️ **知識圖譜強制深度整合 (Mandatory MetagenomicKG Graph Integration)**：你必須深度整合下方「📚 Textbook Supplementary Knowledge」部分提供的 MetagenomicKG 圖資料庫檢索脈絡（特別是 Pathogen、Disease、以及它們之間的 Linked Associations 臨床實證關聯，例如特定的病原體與慢性感染、腫瘤或併發症的已知醫學關聯）。請在分析中明確指出檢出微生物在圖譜中的病原體分類（如 Is Pathogen 是否為已知病原）、其在臨床上所涉疾病與致病機制，嚴禁直接忽略圖譜背景知識。
 
 5. 結論與後續建議 (Conclusion & Next Steps)
    - 總結分析亮點，並提出針對該病人後續臨床追蹤或進一步分析的方向（例如：Alpha/Beta 多樣性變化、功能基因預測等）。
+   - ⚠️ **臨床治療與投藥指引**：必須結合圖譜檢索到的推薦藥物與臨床實證背景資訊（Recommended Drug/Chemical & Details），針對病患後續的經驗性治療或精準用藥調整，給予具備圖譜科學依據的臨床指引建議。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
+- **MetagenomicKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 Pathogen-Disease 關聯、推薦藥物等實時檢索資訊）有機融合融入對應的第 4 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
 - 報告語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。
 - 請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
  
@@ -1112,15 +1115,18 @@ TEMPLATE_MAP = {
    - 詳細列出檢出的病毒/細菌/真菌病原體及其在各樣本中的相對豐度（RPM / rPM / Reads per million）。
    - 針對主要目標病原體，分析其基因體覆蓋率（Genome Coverage）與平均定序深度（Mean Depth）在不同檢體間的差異。
    - 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
+   - ⚠️ **圖譜病原特性與宿主關聯整合 (Mandatory MetagenomicKG Graph Integration)**：針對檢出的主要病原體，你必須深度參考並結合「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 實時檢索拉回的微生物病原體屬性、臨床致病特徵，特別是該病原體在圖譜中與特定慢性感染、器官病變或腫瘤/併發症的 Linked Associations 關聯，探討其在該名病患體內的潛在臨床危害。
 
 4. 系統發生與變異分析 (Phylogenetic & Variant Analysis - 追蹤病原體演化)
    - 比較不同時間點或不同部位檢體中 Consensus Genome 的變異位點，探討病原體在病人體內的基因型（Genotype）、亞型（Subtype）演化，或抗藥性/毒力相關位點的突變漂移（Mutation drift）。
 
 5. 總結與建議 (Conclusion & Recommendations)
    - 綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）或臨床處置提出建議。
+   - ⚠️ **臨床干預與精準投藥建議**：請深度參考圖譜檢索出的「Recommended Drug/Chemical」藥物建議，為臨床醫師在針對該特定病原突變株的治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置方案。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
+- **MetagenomicKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 Pathogen-Disease 關聯、推薦藥物等實時檢索資訊）有機融合融入對應的第 3 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
 - 報告語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。
 - 請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
 
@@ -1144,13 +1150,19 @@ TEMPLATE_MAP = {
    - 根據檢測結果列出該病人在不同檢體中主要的病原微生物及其相對豐度或檢出情形的動態變化。
 3. 抗藥性基因 (ARGs) 與抗生素關聯分析 (Antimicrobial Resistance Profile)：
    - 整理在不同時間點或部位偵測到的抗藥性基因，對應其所抵抗的抗生素類別（如 Beta-lactams、Aminoglycosides 等）、基因覆蓋率的變化。
+   - ⚠️ **圖譜藥理與抗藥機制深度整合 (Mandatory MetagenomicKG Graph Integration)**：你必須深度結合下方「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 所檢索出的藥物、抗生素或化學物背景資訊（例如 Beta-lactam 類、Vancomycin、Ciprofloxacin 等），對比分析目前檢出的抗藥基因與其臨床用藥之間的交互關係、潛在毒性或藥物副作用。
+
 4. 綜合風險評估與臨床意涵 (Clinical & Public Health Implications)：
    - 綜合病原體與抗藥性基因結果，評估該病人體內抗藥性突變或抗藥菌株清除/篩選的潛在風險（例如：治療壓力下的抗藥性演變）。
+   - ⚠️ **圖譜病原致病風險整合**：必須將圖譜中該病原體與特定系統性感染（如 Sepsis 敗血症、Pneumonia 肺炎、UTI 尿路感染等）或腫瘤併發症的 Linked Associations 臨床實證關聯，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
+
 5. 後續建議 (Recommendations)：
    - 針對該病人的檢測結果，提出後續實驗驗證或臨床抗生素調整的處置建議。
+   - ⚠️ **替代藥物與臨床實證用藥指引**：必須結合圖譜中所建議之有效/推薦藥物（Recommended Drug/Chemical）及細節，提出具臨床實證依據的抗生素療程調整或合併用藥方案。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
+- **MetagenomicKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 Pathogen-Disease 關聯、推薦藥物等實時檢索資訊）有機融合融入對應的第 3 點、第 4 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
 - 報告語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。
 - 請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
 
