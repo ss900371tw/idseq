@@ -17,3 +17,4 @@ requests
 pydantic
 ctakesclient
 langchain-core
+markdown
