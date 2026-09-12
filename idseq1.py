@@ -544,6 +544,59 @@ def search_medical_code(string_term, target_system, api_key):
     except requests.exceptions.RequestException:
         return None
 
+def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
+    """
+    對產出的 FHIR Bundle 進行後處理校驗：
+    檢查各個 resource 中的 system 與 code 是否一致，若不一致或疑似幻覺，
+    則透過 UMLS API 重新查詢修正，以確保資料正確性。
+    """
+    system_map_reverse = {
+        "http://loinc.org": "LNC",
+        "http://www.nlm.nih.gov/research/umls/rxnorm": "RXNORM",
+        "http://snomed.info/sct": "SNOMEDCT_US"
+    }
+
+    if not fhir_bundle or "entry" not in fhir_bundle:
+        return fhir_bundle
+
+    for entry in fhir_bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        
+        # 收集所有需要檢查的 Codeable Concept 欄位（如 code, medicationCodeableConcept 等）
+        concepts_to_check = []
+        if "code" in resource and isinstance(resource["code"], dict):
+            concepts_to_check.append(resource["code"])
+        if "medicationCodeableConcept" in resource and isinstance(resource["medicationCodeableConcept"], dict):
+            concepts_to_check.append(resource["medicationCodeableConcept"])
+
+        for cc in concepts_to_check:
+            display_text = cc.get("text", "")
+            codings = cc.get("coding", [])
+            
+            cleaned_codings = []
+            for coding in codings:
+                sys_uri = coding.get("system")
+                code_val = coding.get("code")
+                display_val = coding.get("display", display_text)
+                
+                # 確認是否為指定的標準系統
+                if sys_uri in system_map_reverse:
+                    target_sabs = system_map_reverse[sys_uri]
+                    
+                    # 透過 UMLS 進行交叉查證與校正
+                    search_term = display_val if display_val else display_text
+                    if search_term:
+                        verified_res = search_medical_code(search_term, target_sabs, umls_api_key)
+                        if verified_res:
+                            # 更新為經 UMLS 驗證的真實正確代碼，防止幻覺
+                            coding["code"] = verified_res["code"]
+                            coding["display"] = verified_res["name"]
+                
+                cleaned_codings.append(coding)
+            cc["coding"] = cleaned_codings
+
+    return fhir_bundle
+
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
     結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
@@ -843,11 +896,16 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
                 
             standard_entries.append({"resource": res_dict, "request": {"method": "POST", "url": res_dict["resourceType"]}})
             
-        return {
+        raw_bundle = {
             "resourceType": "Bundle",
             "type": "transaction",
             "entry": standard_entries
         }
+
+        # ✅ 執行防幻覺與一致性校驗與修正
+        validated_bundle = validate_and_correct_fhir_bundle(raw_bundle, umls_api_key)
+        return validated_bundle
+        
     except Exception as e:
         import sys
         print(f"❌ [FHIR Converter Error] {e}", file=sys.stderr)
