@@ -546,8 +546,10 @@ def search_medical_code(string_term, target_system, api_key):
 
 def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     """
-    對產出的 FHIR Bundle 進行嚴格的後處理校驗：
-    強制檢查並修正 system 與 code 的配對，防止 Cross-mapping 幻覺。
+    將 FHIR Bundle 後處理簡化為「品質與存在性驗證」：
+    1. 基礎格式驗證：檢查代碼與系統是否對應（例如 LOINC 必須帶有 '-'、SNOMED/RxNorm 必須為純數字）。
+    2. UMLS 存在性與真實性驗證：透過 UMLS API 重新檢索。若查無結果或概念層級落差太大，
+       直接移除該 coding 項目，落實「寧缺莫濫」原則，確保只留下乾淨且正確的 text 描述。
     """
     system_map_reverse = {
         "http://loinc.org": "LNC",
@@ -569,42 +571,47 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
             concepts_to_check.append((resource["medicationCodeableConcept"], "MedicationRequest"))
 
         for cc, r_type in concepts_to_check:
-            display_text = cc.get("text", "")
+            display_text = cc.get("text", "").strip()
             codings = cc.get("coding", [])
             
-            cleaned_codings = []
+            valid_codings = []
             for coding in codings:
                 sys_uri = coding.get("system")
                 code_val = str(coding.get("code", ""))
                 display_val = coding.get("display", display_text)
                 
-                # 🛑 防呆修正：若為 LOINC 系統，但 code 明顯是 SNOMED 代碼（通常 SNOMED 為純數字且 6~10 碼，而 LOINC 通常包含橫線如 '12345-6'）
-                if sys_uri == "http://loinc.org" and not "-" in code_val and code_val.isdigit():
-                    # 這代表發生了 Cross-mapping 幻覺！強制修正回正確的 SNOMED system
-                    sys_uri = "http://snomed.info/sct"
-                    coding["system"] = sys_uri
-
-                # 依據 Resource 類型強制規範合法的 system
-                if r_type == "Condition" and sys_uri != "http://snomed.info/sct":
-                    sys_uri = "http://snomed.info/sct"
-                    coding["system"] = sys_uri
-                elif r_type == "MedicationRequest" and sys_uri != "http://www.nlm.nih.gov/research/umls/rxnorm":
-                    sys_uri = "http://www.nlm.nih.gov/research/umls/rxnorm"
-                    coding["system"] = sys_uri
-
-                # 透過 UMLS 進行二次真實驗證
-                if sys_uri in system_map_reverse:
-                    target_sabs = system_map_reverse[sys_uri]
-                    search_term = display_val if display_val else display_text
-                    if search_term:
-                        verified_res = search_medical_code(search_term, target_sabs, umls_api_key)
-                        if verified_res:
-                            coding["code"] = verified_res["code"]
-                            coding["display"] = verified_res["name"]
+                # 1. 基礎格式驗證 (Basic Format Validation)
+                # LOINC 代碼必須包含 '-'
+                if sys_uri == "http://loinc.org" and "-" not in code_val:
+                    continue  # 格式錯誤，直接捨棄此 coding
                 
-                cleaned_codings.append(coding)
-            cc["coding"] = cleaned_codings
+                # SNOMED CT 與 RxNorm 代碼必須為純數字
+                if sys_uri in ["http://snomed.info/sct", "http://www.nlm.nih.gov/research/umls/rxnorm"] and not code_val.isdigit():
+                    continue  # 格式錯誤，直接捨棄此 coding
 
+                # 2. 系統與資源類型一致性檢查 (System-Resource Consistency)
+                if r_type == "Condition" and sys_uri != "http://snomed.info/sct":
+                    continue
+                if r_type == "MedicationRequest" and sys_uri != "http://www.nlm.nih.gov/research/umls/rxnorm":
+                    continue
+
+                # 3. UMLS 存在性與品質驗證 (Existence & Quality Validation)
+                # 透過 UMLS API 動態查詢。若該詞彙（如藥物類別、廣泛統稱）在該系統中無法被精確對應，
+                # search_medical_code 會回傳 None，此時直接捨棄該 coding，避免任何幻覺。
+                if sys_uri in system_map_reverse and display_val:
+                    target_sabs = system_map_reverse[sys_uri]
+                    verified_res = search_medical_code(display_val, target_sabs, umls_api_key)
+                    
+                    if not verified_res:
+                        # 查無對應或屬於無法賦予標準代碼的抽象概念，直接移除
+                        continue
+                    else:
+                        # 驗證成功，帶入 UMLS 回傳的真實代碼與標準名稱
+                        coding["code"] = verified_res["code"]
+                        coding["display"] = verified_res["name"]
+                valid_codings.append(coding)
+            # 回寫通過驗證的 coding；若全數不合格則清空，僅保留 text 描述
+            cc["coding"] = valid_codings
     return fhir_bundle
     
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
