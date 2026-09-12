@@ -546,10 +546,11 @@ def search_medical_code(string_term, target_system, api_key):
 
 def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     """
-    將 FHIR Bundle 後處理簡化為「品質與存在性驗證」：
-    1. 基礎格式驗證：檢查代碼與系統是否對應（例如 LOINC 必須帶有 '-'、SNOMED/RxNorm 必須為純數字）。
-    2. UMLS 存在性與真實性驗證：透過 UMLS API 重新檢索。若查無結果或概念層級落差太大，
-       直接移除該 coding 項目，落實「寧缺莫濫」原則，確保只留下乾淨且正確的 text 描述。
+    嚴格品質與存在性驗證（拒絕接收模式）：
+    1. 檢查代碼格式與系統對應性。
+    2. 透過 UMLS API 進行真實性與存在性驗證。
+    3. 若驗證失敗或導致 coding 陣列為空 []，則直接「拒絕接收」該筆資源，
+       不保留任何未編碼的純文字項目，徹底排除幻覺與不合格資料。
     """
     system_map_reverse = {
         "http://loinc.org": "LNC",
@@ -560,16 +561,24 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     if not fhir_bundle or "entry" not in fhir_bundle:
         return fhir_bundle
 
+    valid_entries = []
     for entry in fhir_bundle.get("entry", []):
         resource = entry.get("resource", {})
         res_type = resource.get("resourceType")
         
+        # 針對沒有 code 欄位的特殊資源（如 DiagnosticReport 等），可依需求保留或檢查
         concepts_to_check = []
         if "code" in resource and isinstance(resource["code"], dict):
             concepts_to_check.append((resource["code"], res_type))
         if "medicationCodeableConcept" in resource and isinstance(resource["medicationCodeableConcept"], dict):
             concepts_to_check.append((resource["medicationCodeableConcept"], "MedicationRequest"))
 
+        # 若該資源本身沒有臨床代碼欄位（例如純結構報告），預設予以保留
+        if not concepts_to_check:
+            valid_entries.append(entry)
+            continue
+
+        resource_fully_valid = True
         for cc, r_type in concepts_to_check:
             display_text = cc.get("text", "").strip()
             codings = cc.get("coding", [])
@@ -580,38 +589,44 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
                 code_val = str(coding.get("code", ""))
                 display_val = coding.get("display", display_text)
                 
-                # 1. 基礎格式驗證 (Basic Format Validation)
-                # LOINC 代碼必須包含 '-'
+                # 1. 基礎格式驗證
                 if sys_uri == "http://loinc.org" and "-" not in code_val:
-                    continue  # 格式錯誤，直接捨棄此 coding
-                
-                # SNOMED CT 與 RxNorm 代碼必須為純數字
+                    continue
                 if sys_uri in ["http://snomed.info/sct", "http://www.nlm.nih.gov/research/umls/rxnorm"] and not code_val.isdigit():
-                    continue  # 格式錯誤，直接捨棄此 coding
+                    continue
 
-                # 2. 系統與資源類型一致性檢查 (System-Resource Consistency)
+                # 2. 系統與資源類型一致性檢查
                 if r_type == "Condition" and sys_uri != "http://snomed.info/sct":
                     continue
                 if r_type == "MedicationRequest" and sys_uri != "http://www.nlm.nih.gov/research/umls/rxnorm":
                     continue
 
-                # 3. UMLS 存在性與品質驗證 (Existence & Quality Validation)
-                # 透過 UMLS API 動態查詢。若該詞彙（如藥物類別、廣泛統稱）在該系統中無法被精確對應，
-                # search_medical_code 會回傳 None，此時直接捨棄該 coding，避免任何幻覺。
+                # 3. UMLS 存在性與品質驗證
                 if sys_uri in system_map_reverse and display_val:
                     target_sabs = system_map_reverse[sys_uri]
                     verified_res = search_medical_code(display_val, target_sabs, umls_api_key)
                     
                     if not verified_res:
-                        # 查無對應或屬於無法賦予標準代碼的抽象概念，直接移除
-                        continue
+                        continue  # 查無對應，捨棄此 coding
                     else:
-                        # 驗證成功，帶入 UMLS 回傳的真實代碼與標準名稱
                         coding["code"] = verified_res["code"]
                         coding["display"] = verified_res["name"]
+                
                 valid_codings.append(coding)
-            # 回寫通過驗證的 coding；若全數不合格則清空，僅保留 text 描述
+            
+            # 回寫驗證後的 coding
             cc["coding"] = valid_codings
+            
+            # 🛑 核心邏輯：只要該概念的 coding 結算為空陣列 []，代表無法取得合規代碼
+            if not valid_codings:
+                resource_fully_valid = False
+                break
+
+        # 只有當資源中的所有核心概念都成功對應到合規代碼時，才收錄進 Bundle；否則「拒絕接收」整筆資源
+        if resource_fully_valid:
+            valid_entries.append(entry)
+
+    fhir_bundle["entry"] = valid_entries
     return fhir_bundle
     
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
