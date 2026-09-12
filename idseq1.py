@@ -546,8 +546,8 @@ def search_medical_code(string_term, target_system, api_key):
 
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
-    結合 ITRI SmartCoder 與 UMLS API (`search_medical_code`)，
-    將非結構化基因組分析報告轉換為符合三大醫學標準（SNOMED CT、LOINC、RxNorm）的 R4 FHIR Bundle。
+    結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
+    從非結構化分析報告中精確提取臨床關鍵字與實體，轉換為標準 R4 FHIR Bundle。
     """
     import google.generativeai as genai
     import json
@@ -559,50 +559,90 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     from uuid import uuid4
     import time
 
-    # Define Gemini-compatible Flat Schema for cTAKES Concept Extraction
+    # Define Gemini-compatible Flat Schema for cTAKES Concept & Keyword Extraction
     class FlatClinicalEntity(BaseModel):
         mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
         begin: int = Field(description="Character index where mention begins in the note")
         end: int = Field(description="Character index where mention ends in the note")
-        text: str = Field(description="Exact clinical text matching from the note, e.g. 'Sepsis', 'COVID-19', 'Amoxicillin'")
+        text: str = Field(description="Exact clinical keyword/entity text extracted from the report, e.g. 'Staphylococcus aureus', 'Sepsis', 'Vancomycin'")
         polarity: int = Field(description="0 for positive mention, -1 for negated mention")
-        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms, or 'RXNORM' for medications, or 'LOINC' for observations/tests")
-        code: str = Field(description="The standard code from the chosen system (SNOMED CT, RxNorm, or LOINC).")
-        cui: str = Field(description="A realistic UMLS Concept Unique Identifier, e.g. C0036690 for Sepsis")
-        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier, e.g. T047 for disease")
+        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms/pathogens, or 'RXNORM' for medications, or 'LOINC' for observations/tests")
+        code: str = Field(description="The standard code from the chosen system.")
+        cui: str = Field(description="A realistic UMLS Concept Unique Identifier")
+        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier")
 
     class FlatCtakesInput(BaseModel):
-        entities: List[FlatClinicalEntity] = Field(description="List of extracted clinical entities from the clinical note")
+        entities: List[FlatClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
 
-    # 1. 結合您的 UMLS API 函數，針對常見的基因組/臨床關鍵字進行線上即時標準編碼查詢
-    umls_api_key = "d6fbdc40-6f90-484a-a8a7-14c919cdfda0" # 您的 UMLS API Key
-    target_terms_to_check = [
-        ("Diabetes mellitus", "SNOMEDCT_US"),
-        ("Metformin", "RXNORM"),
-        ("Glucose", "LNC"),
-        ("Sepsis", "SNOMEDCT_US"),
-        ("Pneumonia", "SNOMEDCT_US"),
-        ("Amoxicillin", "RXNORM")
-    ]
+    # 1. 取得使用者在側邊欄設定的 UMLS API Key
+    umls_api_key = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
     
-    umls_resolved_codings = []
-    for term, sys_code in target_terms_to_check:
-        if term.lower() in report_markdown.lower():
-            res = search_medical_code(term, sys_code, umls_api_key)
-            if res:
-                system_uri_map = {
-                    "SNOMEDCT_US": "http://snomed.info/sct",
-                    "RXNORM": "http://www.nlm.nih.gov/research/umls/rxnorm",
-                    "LNC": "http://loinc.org"
-                }
-                umls_resolved_codings.append({
-                    "term": term,
-                    "code": res["code"],
-                    "name": res["name"],
-                    "system": system_uri_map.get(sys_code, "http://snomed.info/sct")
-                })
+    # 2. 透過 Gemini 動態從報告中萃取關鍵醫學名詞/實體，進行動態關鍵字檢索與標準化
+    genai.configure(api_key=api_key)
+    extractor_model = genai.GenerativeModel("gemini-2.5-pro")
+    
+    extraction_prompt = f"""
+You are a precise clinical keyword and entity extraction engine.
+Analyze the following clinical metagenomic analysis report, extract all key medical entities, pathogens, conditions, and medications as distinct keywords, and determine their appropriate terminology category.
 
-    # 2. 結合原本的 ITRI 智慧編碼機制（雙軌強化對齊）
+Report Text:
+\"\"\"
+{report_markdown}
+\"\"\"
+"""
+    
+    extracted_terms_to_check = []
+    try:
+        extract_resp = extractor_model.generate_content(
+            extraction_prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=FlatCtakesInput
+            )
+        )
+        ext_text = extract_resp.text.strip()
+        if ext_text.startswith("```json"):
+            ext_text = ext_text.split("```json")[1].split("```")[0].strip()
+        elif ext_text.startswith("```"):
+            ext_text = ext_text.split("```")[1].split("```")[0].strip()
+        parsed_ext = json.loads(ext_text)
+        for ent in parsed_ext.get("entities", []):
+            t_str = ent.get("text")
+            m_type = ent.get("mention_type")
+            if t_str:
+                sys_target = "SNOMEDCT_US"
+                if "Medication" in m_type:
+                    sys_target = "RXNORM"
+                elif "Observation" in m_type or "Sign" in m_type:
+                    sys_target = "LNC"
+                extracted_terms_to_check.append((t_str, sys_target))
+    except Exception:
+        # 預設備用關鍵字清單
+        extracted_terms_to_check = [
+            ("Staphylococcus aureus", "SNOMEDCT_US"),
+            ("Sepsis", "SNOMEDCT_US"),
+            ("Pneumonia", "SNOMEDCT_US"),
+            ("Vancomycin", "RXNORM")
+        ]
+
+    # 3. 透過 UMLS API 進行動態關鍵字標準編碼查詢
+    umls_resolved_codings = []
+    for term, sys_code in extracted_terms_to_check[:8]: # 限制前 8 個關鍵字以保持高效率
+        res = search_medical_code(term, sys_code, umls_api_key)
+        if res:
+            system_uri_map = {
+                "SNOMEDCT_US": "http://snomed.info/sct",
+                "RXNORM": "http://www.nlm.nih.gov/research/umls/rxnorm",
+                "LNC": "http://loinc.org"
+            }
+            umls_resolved_codings.append({
+                "term": term,
+                "code": res["code"],
+                "name": res["name"],
+                "system": system_uri_map.get(sys_code, "http://snomed.info/sct")
+            })
+
+    # 4. 結合 ITRI 智慧編碼機制
     itri_codings = []
     polished_note = report_markdown
 
@@ -644,7 +684,6 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     except Exception:
         pass
 
-    # 組合外部醫學字典的脈絡，提供給 Gemini 作為高精度對齊標準
     combined_context_str = "Pre-verified standard codings from UMLS API & ITRI SmartCoder:\n"
     for item in umls_resolved_codings:
         combined_context_str += f"- Term: '{item['term']}' | Code: '{item['code']}' | Name: '{item['name']}' | System: {item['system']}\n"
@@ -652,14 +691,13 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
         combined_context_str += f"- SNOMED Code: '{item.get('concept_id')}' | Description: '{item.get('code_name')}' | System: 'http://snomed.info/sct'\n"
 
     # 初始化 Gemini Clinical NLP 實體提取引擎
-    genai.configure(api_key=api_key)
     nlp_model = genai.GenerativeModel("gemini-2.5-pro")
 
     prompt = f"""
 You are a highly specialized clinical NLP pipeline engine, functioning like Apache cTAKES and UMLS ontology lookup tool.
-Analyze the unstructured clinical genomic text and extract clinical entities, mapping them to structured cTAKES JSON format.
+Analyze the extracted clinical keywords and unstructured report, and map them to structured cTAKES JSON format.
 
-Unstructured Genomic Analysis Text Report:
+Unstructured Report:
 \"\"\"
 {polished_note}
 \"\"\"
@@ -673,7 +711,7 @@ You MUST utilize these exact pre-verified standard codes when matching these ter
 \"\"\"
 
 Extract all clinical entities and populate the FlatCtakesInput schema:
-- Diseases/Diagnoses: use `mention_type='DiseaseDisorderMention'` and system='SNOMEDCT'.
+- Diseases/Pathogens: use `mention_type='DiseaseDisorderMention'` and system='SNOMEDCT'.
 - Medications/Drugs: use `mention_type='MedicationMention'` and system='RXNORM'.
 - Observations/Tests: use `mention_type='SignSymptomMention'` or laboratory tests using system='LOINC'.
 """
@@ -730,7 +768,7 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
         standard_entries = []
         now_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         
-        # 建立 DiagnosticReport
+        # 建立 DiagnosticReport（僅摘要關鍵結論，不全文照放）
         diag_report = {
             "resourceType": "DiagnosticReport",
             "id": f"dr-{uuid4().hex[:8]}",
@@ -749,7 +787,7 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
                 "reference": f"Patient/{patient_id}"
             },
             "issued": now_str,
-            "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR. Original note: {polished_note[:500]}..."
+            "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR (Key Entities Extracted)."
         }
         standard_entries.append({"resource": diag_report, "request": {"method": "POST", "url": "DiagnosticReport"}})
         
