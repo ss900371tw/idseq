@@ -546,9 +546,8 @@ def search_medical_code(string_term, target_system, api_key):
 
 def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     """
-    對產出的 FHIR Bundle 進行後處理校驗：
-    檢查各個 resource 中的 system 與 code 是否一致，若不一致或疑似幻覺，
-    則透過 UMLS API 重新查詢修正，以確保資料正確性。
+    對產出的 FHIR Bundle 進行嚴格的後處理校驗：
+    強制檢查並修正 system 與 code 的配對，防止 Cross-mapping 幻覺。
     """
     system_map_reverse = {
         "http://loinc.org": "LNC",
@@ -561,34 +560,45 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
 
     for entry in fhir_bundle.get("entry", []):
         resource = entry.get("resource", {})
+        res_type = resource.get("resourceType")
         
-        # 收集所有需要檢查的 Codeable Concept 欄位（如 code, medicationCodeableConcept 等）
         concepts_to_check = []
         if "code" in resource and isinstance(resource["code"], dict):
-            concepts_to_check.append(resource["code"])
+            concepts_to_check.append((resource["code"], res_type))
         if "medicationCodeableConcept" in resource and isinstance(resource["medicationCodeableConcept"], dict):
-            concepts_to_check.append(resource["medicationCodeableConcept"])
+            concepts_to_check.append((resource["medicationCodeableConcept"], "MedicationRequest"))
 
-        for cc in concepts_to_check:
+        for cc, r_type in concepts_to_check:
             display_text = cc.get("text", "")
             codings = cc.get("coding", [])
             
             cleaned_codings = []
             for coding in codings:
                 sys_uri = coding.get("system")
-                code_val = coding.get("code")
+                code_val = str(coding.get("code", ""))
                 display_val = coding.get("display", display_text)
                 
-                # 確認是否為指定的標準系統
+                # 🛑 防呆修正：若為 LOINC 系統，但 code 明顯是 SNOMED 代碼（通常 SNOMED 為純數字且 6~10 碼，而 LOINC 通常包含橫線如 '12345-6'）
+                if sys_uri == "http://loinc.org" and not "-" in code_val and code_val.isdigit():
+                    # 這代表發生了 Cross-mapping 幻覺！強制修正回正確的 SNOMED system
+                    sys_uri = "http://snomed.info/sct"
+                    coding["system"] = sys_uri
+
+                # 依據 Resource 類型強制規範合法的 system
+                if r_type == "Condition" and sys_uri != "http://snomed.info/sct":
+                    sys_uri = "http://snomed.info/sct"
+                    coding["system"] = sys_uri
+                elif r_type == "MedicationRequest" and sys_uri != "http://www.nlm.nih.gov/research/umls/rxnorm":
+                    sys_uri = "http://www.nlm.nih.gov/research/umls/rxnorm"
+                    coding["system"] = sys_uri
+
+                # 透過 UMLS 進行二次真實驗證
                 if sys_uri in system_map_reverse:
                     target_sabs = system_map_reverse[sys_uri]
-                    
-                    # 透過 UMLS 進行交叉查證與校正
                     search_term = display_val if display_val else display_text
                     if search_term:
                         verified_res = search_medical_code(search_term, target_sabs, umls_api_key)
                         if verified_res:
-                            # 更新為經 UMLS 驗證的真實正確代碼，防止幻覺
                             coding["code"] = verified_res["code"]
                             coding["display"] = verified_res["name"]
                 
@@ -596,7 +606,7 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
             cc["coding"] = cleaned_codings
 
     return fhir_bundle
-
+    
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
     結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
