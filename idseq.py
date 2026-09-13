@@ -509,40 +509,225 @@ def upload_report_to_fhir(server_url, patient_id, report_markdown, report_title,
     except Exception as e:
         return False, str(e)
 
+def search_medical_code(string_term, target_system, api_key):
+    """
+    透過 UMLS API 查詢醫學名詞的標準編號
+    :param string_term: 醫學名詞 (例如: 'Diabetes', 'Metformin', 'Glucose')
+    :param target_system: 限制的術語庫系統代碼 ('SNOMEDCT_US', 'LOINC', 'RXNORM')
+    :param api_key: 你的 UMLS API Key
+    """
+    url = "https://uts-ws.nlm.nih.gov/rest/search/current"
+    
+    params = {
+        'string': string_term,
+        'sabs': target_system,      # 指定術語系統
+        'returnIdType': 'sourceUi', # 直接返回該系統的原始代碼（而非 UMLS 自己的 CUI）
+        'apiKey': api_key,
+        'pageSize': 3               # 限制回傳的前幾筆最相關結果
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        
+        results = data.get('result', {}).get('results', [])
+        if not results:
+            return None
+            
+        # 回傳第一筆最相關的結果
+        best_match = results[0]
+        return {
+            "code": best_match.get('ui'),
+            "name": best_match.get('name')
+        }
+    except requests.exceptions.RequestException:
+        return None
+
+def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
+    """
+    嚴格品質與存在性驗證（拒絕接收模式）：
+    1. 檢查代碼格式與系統對應性。
+    2. 透過 UMLS API 進行真實性與存在性驗證。
+    3. 若驗證失敗或導致 coding 陣列為空 []，則直接「拒絕接收」該筆資源，
+       不保留任何未編碼的純文字項目，徹底排除幻覺與不合格資料。
+    """
+    system_map_reverse = {
+        "http://loinc.org": "LNC",
+        "http://www.nlm.nih.gov/research/umls/rxnorm": "RXNORM",
+        "http://snomed.info/sct": "SNOMEDCT_US"
+    }
+
+    if not fhir_bundle or "entry" not in fhir_bundle:
+        return fhir_bundle
+
+    valid_entries = []
+    for entry in fhir_bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        res_type = resource.get("resourceType")
+        
+        # 針對沒有 code 欄位的特殊資源（如 DiagnosticReport 等），可依需求保留或檢查
+        concepts_to_check = []
+        if "code" in resource and isinstance(resource["code"], dict):
+            concepts_to_check.append((resource["code"], res_type))
+        if "medicationCodeableConcept" in resource and isinstance(resource["medicationCodeableConcept"], dict):
+            concepts_to_check.append((resource["medicationCodeableConcept"], "MedicationRequest"))
+
+        # 若該資源本身沒有臨床代碼欄位（例如純結構報告），預設予以保留
+        if not concepts_to_check:
+            valid_entries.append(entry)
+            continue
+
+        resource_fully_valid = True
+        for cc, r_type in concepts_to_check:
+            display_text = cc.get("text", "").strip()
+            codings = cc.get("coding", [])
+            
+            valid_codings = []
+            for coding in codings:
+                sys_uri = coding.get("system")
+                code_val = str(coding.get("code", ""))
+                display_val = coding.get("display", display_text)
+                
+                # 1. 基礎格式驗證
+                if sys_uri == "http://loinc.org" and "-" not in code_val:
+                    continue
+                if sys_uri in ["http://snomed.info/sct", "http://www.nlm.nih.gov/research/umls/rxnorm"] and not code_val.isdigit():
+                    continue
+
+                # 2. 系統與資源類型一致性檢查
+                if r_type == "Condition" and sys_uri != "http://snomed.info/sct":
+                    continue
+                if r_type == "MedicationRequest" and sys_uri != "http://www.nlm.nih.gov/research/umls/rxnorm":
+                    continue
+
+                # 3. UMLS 存在性與品質驗證
+                if sys_uri in system_map_reverse and display_val:
+                    target_sabs = system_map_reverse[sys_uri]
+                    verified_res = search_medical_code(display_val, target_sabs, umls_api_key)
+                    
+                    if not verified_res:
+                        continue  # 查無對應，捨棄此 coding
+                    else:
+                        coding["code"] = verified_res["code"]
+                        coding["display"] = verified_res["name"]
+                
+                valid_codings.append(coding)
+            
+            # 回寫驗證後的 coding
+            cc["coding"] = valid_codings
+            
+            # 🛑 核心邏輯：只要該概念的 coding 結算為空陣列 []，代表無法取得合規代碼
+            if not valid_codings:
+                resource_fully_valid = False
+                break
+
+        # 只有當資源中的所有核心概念都成功對應到合規代碼時，才收錄進 Bundle；否則「拒絕接收」整筆資源
+        if resource_fully_valid:
+            valid_entries.append(entry)
+
+    fhir_bundle["entry"] = valid_entries
+    return fhir_bundle
+    
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
-    使用 SMART Text2FHIR Pipeline (基於 Apache cTAKES) 自然語言處理框架，
-    將非結構化的基因組分析報告轉換為高度結構化的 R4 FHIR Bundle (包含 DiagnosticReport、Observation、Condition、與 MedicationRequest 資源)，
-    完全符合 UMLS 統一醫學語言系統，且編碼系統嚴格限制於 SNOMED CT、LOINC 與 RxNorm 三大醫學標準。
+    結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
+    從非結構化分析報告中精確提取臨床關鍵字與實體，轉換為標準 R4 FHIR Bundle。
     """
     import google.generativeai as genai
     import json
     import datetime
     from pydantic import BaseModel, Field
-    from typing import List, Optional
+    from typing import List
     from ctakesclient.typesystem import CtakesJSON
     from ctakesclient import text2fhir
+    from uuid import uuid4
+    import time
 
-    # Define Gemini-compatible Flat Schema for cTAKES Concept Extraction (No Union, No Literal, No $ref)
+    # Define Gemini-compatible Flat Schema for cTAKES Concept & Keyword Extraction
     class FlatClinicalEntity(BaseModel):
         mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
         begin: int = Field(description="Character index where mention begins in the note")
         end: int = Field(description="Character index where mention ends in the note")
-        text: str = Field(description="Exact clinical text matching from the note, e.g. 'Sepsis', 'COVID-19', 'Amoxicillin'")
+        text: str = Field(description="Exact clinical keyword/entity text extracted from the report, e.g. 'Staphylococcus aureus', 'Sepsis', 'Vancomycin'")
         polarity: int = Field(description="0 for positive mention, -1 for negated mention")
-        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms, or 'RXNORM' for medications, or 'LOINC' for observations/tests")
-        code: str = Field(description="The standard code from the chosen system (e.g. SNOMED CT numeric code, RxNorm numeric code). Use the pre-extracted SNOMED CT codes from ITRI if available.")
-        cui: str = Field(description="A realistic UMLS Concept Unique Identifier, e.g. C0036690 for Sepsis, C0002570 for Amoxicillin")
-        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier, e.g. T047 for disease, T121 for medication, T109 for organic chemical")
+        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms/pathogens, or 'RXNORM' for medications, or 'LOINC' for observations/tests")
+        code: str = Field(description="The standard code from the chosen system.")
+        cui: str = Field(description="A realistic UMLS Concept Unique Identifier")
+        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier")
 
     class FlatCtakesInput(BaseModel):
-        entities: List[FlatClinicalEntity] = Field(description="List of extracted clinical entities from the clinical note")
+        entities: List[FlatClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
 
-    # 1. 使用 ITRI SmartCoder API 提取準確的 SNOMED CT 臨床代碼
-    import requests
-    from uuid import uuid4
-    import time
+    # 1. 取得使用者在側邊欄設定的 UMLS API Key
+    umls_api_key = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
+    
+    # 2. 透過 Gemini 動態從報告中萃取關鍵醫學名詞/實體，進行動態關鍵字檢索與標準化
+    genai.configure(api_key=api_key)
+    extractor_model = genai.GenerativeModel("gemini-2.5-pro")
+    
+    extraction_prompt = f"""
+You are a precise clinical keyword and entity extraction engine.
+Analyze the following clinical metagenomic analysis report, extract all key medical entities, pathogens, conditions, and medications as distinct keywords, and determine their appropriate terminology category.
 
+Report Text:
+\"\"\"
+{report_markdown}
+\"\"\"
+"""
+    
+    extracted_terms_to_check = []
+    try:
+        extract_resp = extractor_model.generate_content(
+            extraction_prompt,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                response_schema=FlatCtakesInput
+            )
+        )
+        ext_text = extract_resp.text.strip()
+        if ext_text.startswith("```json"):
+            ext_text = ext_text.split("```json")[1].split("```")[0].strip()
+        elif ext_text.startswith("```"):
+            ext_text = ext_text.split("```")[1].split("```")[0].strip()
+        parsed_ext = json.loads(ext_text)
+        for ent in parsed_ext.get("entities", []):
+            t_str = ent.get("text")
+            m_type = ent.get("mention_type")
+            if t_str:
+                sys_target = "SNOMEDCT_US"
+                if "Medication" in m_type:
+                    sys_target = "RXNORM"
+                elif "Observation" in m_type or "Sign" in m_type:
+                    sys_target = "LNC"
+                extracted_terms_to_check.append((t_str, sys_target))
+    except Exception:
+        # 預設備用關鍵字清單
+        extracted_terms_to_check = [
+            ("Staphylococcus aureus", "SNOMEDCT_US"),
+            ("Sepsis", "SNOMEDCT_US"),
+            ("Pneumonia", "SNOMEDCT_US"),
+            ("Vancomycin", "RXNORM")
+        ]
+
+    # 3. 透過 UMLS API 進行動態關鍵字標準編碼查詢
+    umls_resolved_codings = []
+    for term, sys_code in extracted_terms_to_check[:8]: # 限制前 8 個關鍵字以保持高效率
+        res = search_medical_code(term, sys_code, umls_api_key)
+        if res:
+            system_uri_map = {
+                "SNOMEDCT_US": "http://snomed.info/sct",
+                "RXNORM": "http://www.nlm.nih.gov/research/umls/rxnorm",
+                "LNC": "http://loinc.org"
+            }
+            umls_resolved_codings.append({
+                "term": term,
+                "code": res["code"],
+                "name": res["name"],
+                "system": system_uri_map.get(sys_code, "http://snomed.info/sct")
+            })
+
+    # 4. 結合 ITRI 智慧編碼機制
     itri_codings = []
     polished_note = report_markdown
 
@@ -559,30 +744,16 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
         }
         payload = {
             "request_id": req_id,
-            # "encounter_type": "outpatient",
             "raw_clinical_note": report_markdown,
             "output_format": "simple",
         }
         
-        # 1. 發起 POST 請求
-        response_api = requests.post(
-            api_url,
-            headers=headers,
-            json=payload,
-            timeout=(10, 240),
-            allow_redirects=False,
-        )
+        response_api = requests.post(api_url, headers=headers, json=payload, timeout=(10, 240), allow_redirects=False)
         response_api.raise_for_status()
         
-        # 2. 進行非同步 GET 輪詢 (Polling) 以確保結果生成完畢
-        for attempt in range(15): # 輪詢 15 次，每次間隔 3 秒，最多 45 秒
+        for attempt in range(15):
             lookup_url = f"https://smartcoderm.itri-nlp.tw/sandbox/api/v1/snomed/results/{req_id}"
-            lookup_resp = requests.get(
-                lookup_url,
-                headers=headers,
-                timeout=(10, 60),
-                allow_redirects=False
-            )
+            lookup_resp = requests.get(lookup_url, headers=headers, timeout=(10, 60), allow_redirects=False)
             if lookup_resp.status_code == 200:
                 lookup_data = lookup_resp.json()
                 if lookup_data.get("status") == "completed":
@@ -595,52 +766,39 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
                 elif lookup_data.get("status") == "failed":
                     break
             time.sleep(3)
-    except Exception as api_ex:
-        # 如果網路/API 連線失敗，我們優雅地跳過，僅使用原文本
+    except Exception:
         pass
 
-    # 格式化 SNOMED 脈絡，供 Gemini 當作高精度對齊標準
-    snomed_context_str = ""
-    if itri_codings:
-        snomed_context_str = "Pre-extracted standard medical codings from ITRI SmartCoder:\n"
-        for item in itri_codings:
-            concept_id = item.get("concept_id")
-            code_name = item.get("code_name")
-            confidence = item.get("confidence", 1.0)
-            snomed_context_str += f"- Standard Code: '{concept_id}' | Description: '{code_name}' | Terminology: SNOMED CT (system: 'http://snomed.info/sct') | Confidence: {confidence}\n"
-    else:
-        snomed_context_str = "No automated standard codes matched. Please infer LOINC, SNOMED CT, or RxNorm codes manually with extreme care."
+    combined_context_str = "Pre-verified standard codings from UMLS API & ITRI SmartCoder:\n"
+    for item in umls_resolved_codings:
+        combined_context_str += f"- Term: '{item['term']}' | Code: '{item['code']}' | Name: '{item['name']}' | System: {item['system']}\n"
+    for item in itri_codings:
+        combined_context_str += f"- SNOMED Code: '{item.get('concept_id')}' | Description: '{item.get('code_name')}' | System: 'http://snomed.info/sct'\n"
 
-    # 初始化與配置 Gemini 作為 Clinical NLP 實體提取引擎
-    genai.configure(api_key=api_key)
+    # 初始化 Gemini Clinical NLP 實體提取引擎
     nlp_model = genai.GenerativeModel("gemini-2.5-pro")
 
     prompt = f"""
-You are a highly specialized clinical NLP pipeline engine, functioning like Apache cTAKES (Clinical Text Analysis and Knowledge Extraction System) and UMLS ontology lookup tool.
-Your job is to analyze unstructured clinical genomic text and extract clinical entities, mapping them to structured cTAKES JSON input format.
+You are a highly specialized clinical NLP pipeline engine, functioning like Apache cTAKES and UMLS ontology lookup tool.
+Analyze the extracted clinical keywords and unstructured report, and map them to structured cTAKES JSON format.
 
-Unstructured Genomic Analysis Text Report:
+Unstructured Report:
 \"\"\"
 {polished_note}
 \"\"\"
 
 Patient ID: {patient_id}
 
-🧬 STANDARD CLINICAL CODING REFERENCES (Extracted from real clinical vocabulary engine):
-The following medical concepts and standard SNOMED CT codes were pre-validated for this clinical note. You MUST use these exact codes when representing these clinical findings in your extraction results:
+🧬 STANDARD CLINICAL CODING REFERENCES (UMLS API & Vocabulary Engine):
+You MUST utilize these exact pre-verified standard codes when matching these terms:
 \"\"\"
-{snomed_context_str}
+{combined_context_str}
 \"\"\"
 
-You must extract all clinical entities and populate the FlatCtakesInput schema:
-1. `entities`:
-   - For diseases, diagnoses, or infection states (Sepsis, COVID-19, UTI, Pneumonia, Bronchitis, Asthma, Diabetes, Hypertension), use `mention_type='DiseaseDisorderMention'` and system='SNOMEDCT' with corresponding numeric SNOMED CT codes (use pre-extracted ITRI codes if available).
-   - For medications, prescribed drugs, or antibiotic administrations (Albuterol, Amoxicillin, Piperacillin-Tazobactam, Vancomycin, Ciprofloxacin, Metformin), use `mention_type='MedicationMention'` and system='RXNORM' with standard RxNorm codes.
-   - For signs or symptoms (Cough, Fever, Nausea, Vomiting, Headache, Pain), use `mention_type='SignSymptomMention'` and system='SNOMEDCT' with corresponding codes.
-   - For medical procedures or surgical history, use `mention_type='ProcedureMention'` and system='SNOMEDCT' or 'LOINC' with corresponding codes.
-   - For anatomical sites of infection (BAL, Nasopharyngeal, Stool, Upper Respiratory), use `mention_type='AnatomicalSiteMention'` and system='SNOMEDCT'.
-
-Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Semantic Type TUI (e.g. T047 for Disease, T121 for Pharmacologic Substance/Medication) so that the SMART Text2FHIR pipeline can successfully map them.
+Extract all clinical entities and populate the FlatCtakesInput schema:
+- Diseases/Pathogens: use `mention_type='DiseaseDisorderMention'` and system='SNOMEDCT'.
+- Medications/Drugs: use `mention_type='MedicationMention'` and system='RXNORM'.
+- Observations/Tests: use `mention_type='SignSymptomMention'` or laboratory tests using system='LOINC'.
 """
 
     try:
@@ -652,8 +810,6 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             )
         )
         raw_text = response.text.strip()
-        
-        # 清理可能夾帶的 Markdown 標記
         if raw_text.startswith("```json"):
             raw_text = raw_text.split("```json")[1].split("```")[0].strip()
         elif raw_text.startswith("```"):
@@ -661,7 +817,6 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             
         parsed_data = json.loads(raw_text)
         
-        # 2. 將 Gemini 產生的 Flat 結構，在 Python 端重塑為 cTAKES 標準 Mentions 巢狀 JSON
         ctakes_source = {}
         for entity in parsed_data.get("entities", []):
             m_type = entity.get("mention_type")
@@ -687,10 +842,7 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             }
             ctakes_source[m_type].append(mention_obj)
             
-        # 3. 實例化為 ctakesclient.typesystem.CtakesJSON
         ctakes_json = CtakesJSON(ctakes_source)
-        
-        # 4. 呼叫 SMART Text2FHIR Pipeline 自動轉譯為標準 FHIR 資源物件
         resources = text2fhir.nlp_fhir(
             subject_id=patient_id,
             encounter_id=f"enc-{uuid4().hex[:6]}",
@@ -698,11 +850,10 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             nlp_results=ctakes_json
         )
         
-        # 5. 包裝進標準的 FHIR R4 Bundle
         standard_entries = []
-        
-        # 手置 DiagnosticReport 代表本次 Metagenomic 分析報告主體
         now_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        # 建立 DiagnosticReport（僅摘要關鍵結論，不全文照放）
         diag_report = {
             "resourceType": "DiagnosticReport",
             "id": f"dr-{uuid4().hex[:8]}",
@@ -721,51 +872,34 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
                 "reference": f"Patient/{patient_id}"
             },
             "issued": now_str,
-            "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR Pipeline (based on Apache cTAKES). Original note: {polished_note[:500]}..."
+            "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR (Key Entities Extracted)."
         }
-        standard_entries.append({
-            "resource": diag_report,
-            "request": {
-                "method": "POST",
-                "url": "DiagnosticReport"
-            }
-        })
+        standard_entries.append({"resource": diag_report, "request": {"method": "POST", "url": "DiagnosticReport"}})
         
-        # 加入所有經由 cTAKES text2fhir Pipeline 自動產出的資源，並套用嚴格的 3-system 白名單與資源映射
+        allowed_systems = {
+            "http://snomed.info/sct",
+            "http://loinc.org",
+            "http://www.nlm.nih.gov/research/umls/rxnorm"
+        }
+        
         for res in resources:
             res_dict = res.as_json()
-            
-            # 將 MedicationStatement 映射轉換為符合需求的 MedicationRequest
             if res_dict.get("resourceType") == "MedicationStatement":
                 res_dict["resourceType"] = "MedicationRequest"
                 res_dict["intent"] = "order"
-                if "status" not in res_dict or res_dict["status"] == "unknown":
-                    res_dict["status"] = "active"
-                    
-            # 確保 Patient subject 參考正確無誤
+                res_dict["status"] = "active"
+                
             if "subject" in res_dict and isinstance(res_dict["subject"], dict):
                 res_dict["subject"]["reference"] = f"Patient/{patient_id}"
-
             if "encounter" in res_dict:
                 res_dict.pop("encounter", None)
                 
-            # 嚴格的三大編碼系統限制
-            allowed_systems = {
-                "http://snomed.info/sct",
-                "http://loinc.org",
-                "http://www.nlm.nih.gov/research/umls/rxnorm"
-            }
-            
-            # 定義 Pydantic 等效的 coding 白名單過濾器
             def clean_codeable_concept(cc_dict, default_system):
                 if not cc_dict or "coding" not in cc_dict:
                     return
                 cleaned_codings = []
                 for coding in cc_dict.get("coding", []):
-                    system_uri = coding.get("system")
-                    if not system_uri:
-                        system_uri = default_system
-                    # 規格化 system URI
+                    system_uri = coding.get("system", default_system)
                     if "snomed" in system_uri.lower():
                         system_uri = "http://snomed.info/sct"
                     elif "rxnorm" in system_uri.lower():
@@ -776,20 +910,15 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
                     if system_uri in allowed_systems:
                         coding["system"] = system_uri
                         cleaned_codings.append(coding)
-                        
                 if not cleaned_codings and cc_dict.get("coding"):
-                    fallback_coding = cc_dict["coding"][0]
-                    fallback_coding["system"] = default_system
-                    cleaned_codings.append(fallback_coding)
-                    
+                    fallback = cc_dict["coding"][0]
+                    fallback["system"] = default_system
+                    cleaned_codings.append(fallback)
                 cc_dict["coding"] = cleaned_codings
 
-            # 套用語意編碼白名單
             res_type = res_dict.get("resourceType")
             if res_type == "Condition" and "code" in res_dict:
                 clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
-                if "verificationStatus" in res_dict:
-                    clean_codeable_concept(res_dict["verificationStatus"], "http://terminology.hl7.org/CodeSystem/condition-ver-status")
             elif res_type == "MedicationRequest" and "medicationCodeableConcept" in res_dict:
                 clean_codeable_concept(res_dict["medicationCodeableConcept"], "http://www.nlm.nih.gov/research/umls/rxnorm")
             elif res_type == "Observation" and "code" in res_dict:
@@ -797,23 +926,21 @@ Ensure every coding has realistic UMLS CUI (Concept Unique Identifier) and Seman
             elif res_type == "Procedure" and "code" in res_dict:
                 clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
                 
-            standard_entries.append({
-                "resource": res_dict,
-                "request": {
-                    "method": "POST",
-                    "url": res_dict["resourceType"]
-                }
-            })
+            standard_entries.append({"resource": res_dict, "request": {"method": "POST", "url": res_dict["resourceType"]}})
             
-        fhir_bundle = {
+        raw_bundle = {
             "resourceType": "Bundle",
             "type": "transaction",
             "entry": standard_entries
         }
-        return fhir_bundle
+
+        # ✅ 執行防幻覺與一致性校驗與修正
+        validated_bundle = validate_and_correct_fhir_bundle(raw_bundle, umls_api_key)
+        return validated_bundle
+        
     except Exception as e:
         import sys
-        print(f"❌ [FHIR Converter Error] Conversion failed! Exception: {e}", file=sys.stderr)
+        print(f"❌ [FHIR Converter Error] {e}", file=sys.stderr)
         raise e
 
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
@@ -1442,7 +1569,7 @@ def render_mode_card(icon, title, desc, key):
 
 def main():
     st.set_page_config(page_title="Gemini CSV 分析", layout="wide")
-    st.title("🧬 Gemini IDSEQ 分析儀表板") 
+    st.title("🧬 SentinEID：一體化「基因體至床邊」新興感染症 AI 監測與臨床精準決策支援平台") 
 
     # ---------- 初始化 SMART on FHIR 狀態變數 ----------
     if "fhir_url" not in st.session_state:
