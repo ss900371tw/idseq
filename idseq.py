@@ -648,8 +648,8 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
-    結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
-    從非結構化分析報告中精確提取臨床關鍵字與實體，轉換為標準 R4 FHIR Bundle。
+    結合 Gemini 智慧關鍵字/實體萃取（目標 100 個以上）、UMLS API 驗證，
+    從非結構化分析報告中精確提取臨床關鍵字與實體，經編碼比對過濾後轉換為標準 R4 FHIR Bundle。
     """
     import google.generativeai as genai
     import json
@@ -661,40 +661,23 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     from uuid import uuid4
     import time
 
-    # Define Gemini-compatible Flat Schema for cTAKES Concept & Keyword Extraction
-    class FlatClinicalEntity(BaseModel):
-        mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
-        begin: int = Field(description="Character index where mention begins in the note")
-        end: int = Field(description="Character index where mention ends in the note")
-        text: str = Field(description="Exact clinical keyword/entity text extracted from the report, e.g. 'Staphylococcus aureus', 'Sepsis', 'Vancomycin'")
-        polarity: int = Field(description="0 for positive mention, -1 for negated mention")
-        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms/pathogens, or 'RXNORM' for medications, or 'LOINC' for observations/tests")
-        code: str = Field(description="The standard code from the chosen system.")
-        cui: str = Field(description="A realistic UMLS Concept Unique Identifier")
-        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier")
-
-    class FlatCtakesInput(BaseModel):
-        entities: List[FlatClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
-
-    # Defined a simplified schema specifically for keyword extraction to avoid model confusion and token overhead
     class SimpleClinicalEntity(BaseModel):
-        text: str = Field(description="Exact clinical keyword/entity text extracted from the report, e.g. 'Staphylococcus aureus', 'Sepsis', 'Vancomycin'")
-        mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
+        text: str = Field(description="Exact clinical keyword/entity text extracted from the report")
+        mention_type: str = Field(description="Must be 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
 
     class SimpleKeywordInput(BaseModel):
-        entities: List[SimpleClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
+        entities: List[SimpleClinicalEntity] = Field(description="List of extracted key clinical entities and keywords (aim for 100+ terms)")
 
-    # 1. 取得使用者在側邊欄設定的 UMLS API Key
     umls_api_key = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
     
-    # 2. 透過 Gemini 動態從報告中萃取關鍵醫學名詞/實體，進行動態關鍵字檢索與標準化
     genai.configure(api_key=api_key)
     extractor_model = genai.GenerativeModel("gemini-2.5-pro")
     
+    # 💡 提示詞調整：強制要求模型萃取 100 個以上的術語
     extraction_prompt = f"""
-You are an exhaustive clinical keyword and entity extraction engine.
-Analyze the following clinical metagenomic analysis report, extract ALL medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications as distinct keywords.
-Be thorough and extract as many terms as possible (aim for up to 30-40 keywords if present in the text) so we can look up their standard codes in medical terminology systems.
+You are an exhaustive and high-capacity clinical keyword and entity extraction engine.
+Analyze the following clinical metagenomic analysis report and extract AT LEAST 100 TO 150 DISTINCT medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications.
+Be extremely thorough and granular. Extract every possible clinical mention.
 
 Report Text:
 \"\"\"
@@ -706,7 +689,7 @@ Report Text:
     try:
         extract_resp = extractor_model.generate_content(
             extraction_prompt,
-            generation_config=genai.GenerationConfig(
+            generation_config=genai.GenerativeConfig(
                 response_mime_type="application/json",
                 response_schema=SimpleKeywordInput
             )
@@ -727,18 +710,18 @@ Report Text:
                 elif "Observation" in m_type or "Sign" in m_type:
                     sys_target = "LNC"
                 extracted_terms_to_check.append((t_str, sys_target))
-    except Exception:
-        # 預設備用關鍵字清單
-        extracted_terms_to_check = [
-            ("Staphylococcus aureus", "SNOMEDCT_US"),
-            ("Sepsis", "SNOMEDCT_US"),
-            ("Pneumonia", "SNOMEDCT_US"),
-            ("Vancomycin", "RXNORM")
-        ]
+    except Exception as e:
+        print(f"Extraction warning: {e}")
 
-    # 3. 透過 UMLS API 進行動態關鍵字標準編碼查詢
+    # 💡 透過 UMLS API 進行大規模動態關鍵字標準編碼查詢（擴大至前 150 個）
     umls_resolved_codings = []
-    for term, sys_code in extracted_terms_to_check[:40]: # 擴大限制至前 40 個關鍵字以編碼更多項目
+    seen_terms = set()
+    
+    for term, sys_code in extracted_terms_to_check[:150]:
+        if term.lower() in seen_terms:
+            continue
+        seen_terms.add(term.lower())
+        
         res = search_medical_code(term, sys_code, umls_api_key)
         if res:
             system_uri_map = {
@@ -753,6 +736,7 @@ Report Text:
                 "system": system_uri_map.get(sys_code, "http://snomed.info/sct")
             })
 
+    # 後續建構 cTAKES JSON 與 FHIR Bundle 邏輯維持不變...
     # 4. 結合 ITRI 智慧編碼機制
     itri_codings = []
     polished_note = report_markdown
