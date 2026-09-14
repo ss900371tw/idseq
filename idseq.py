@@ -535,8 +535,21 @@ def search_medical_code(string_term, target_system, api_key):
         if not results:
             return None
             
-        # 回傳第一筆最相關的結果
-        best_match = results[0]
+        best_match = None
+        for r in results:
+            ui = r.get('ui', '')
+            if target_system == 'LNC':
+                # LOINC clinical observation codes must consist strictly of digits and a hyphen (e.g. 12345-6)
+                # This excludes LOINC Answers (LA...) and LOINC Parts (LP...)
+                parts_code = ui.split('-')
+                if len(parts_code) != 2 or not parts_code[0].isdigit() or not parts_code[1].isdigit():
+                    continue
+            best_match = r
+            break
+
+        if not best_match:
+            return None
+
         return {
             "code": best_match.get('ui'),
             "name": best_match.get('name')
@@ -590,8 +603,12 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
                 display_val = coding.get("display", display_text)
                 
                 # 1. 基礎格式驗證
-                if sys_uri == "http://loinc.org" and "-" not in code_val:
-                    continue
+                if sys_uri == "http://loinc.org":
+                    # LOINC clinical observation codes must strictly consist of digits and a hyphen (e.g. 12345-6).
+                    # This excludes answer list codes (e.g., LA...) and parts codes (e.g., LP...).
+                    parts_code = code_val.split('-')
+                    if len(parts_code) != 2 or not parts_code[0].isdigit() or not parts_code[1].isdigit():
+                        continue
                 if sys_uri in ["http://snomed.info/sct", "http://www.nlm.nih.gov/research/umls/rxnorm"] and not code_val.isdigit():
                     continue
 
