@@ -659,6 +659,14 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     class FlatCtakesInput(BaseModel):
         entities: List[FlatClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
 
+    # Defined a simplified schema specifically for keyword extraction to avoid model confusion and token overhead
+    class SimpleClinicalEntity(BaseModel):
+        text: str = Field(description="Exact clinical keyword/entity text extracted from the report, e.g. 'Staphylococcus aureus', 'Sepsis', 'Vancomycin'")
+        mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
+
+    class SimpleKeywordInput(BaseModel):
+        entities: List[SimpleClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
+
     # 1. 取得使用者在側邊欄設定的 UMLS API Key
     umls_api_key = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
     
@@ -667,8 +675,9 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     extractor_model = genai.GenerativeModel("gemini-2.5-pro")
     
     extraction_prompt = f"""
-You are a precise clinical keyword and entity extraction engine.
-Analyze the following clinical metagenomic analysis report, extract all key medical entities, pathogens, conditions, and medications as distinct keywords, and determine their appropriate terminology category.
+You are an exhaustive clinical keyword and entity extraction engine.
+Analyze the following clinical metagenomic analysis report, extract ALL medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications as distinct keywords.
+Be thorough and extract as many terms as possible (aim for up to 30-40 keywords if present in the text) so we can look up their standard codes in medical terminology systems.
 
 Report Text:
 \"\"\"
@@ -682,7 +691,7 @@ Report Text:
             extraction_prompt,
             generation_config=genai.GenerationConfig(
                 response_mime_type="application/json",
-                response_schema=FlatCtakesInput
+                response_schema=SimpleKeywordInput
             )
         )
         ext_text = extract_resp.text.strip()
@@ -712,7 +721,7 @@ Report Text:
 
     # 3. 透過 UMLS API 進行動態關鍵字標準編碼查詢
     umls_resolved_codings = []
-    for term, sys_code in extracted_terms_to_check[:8]: # 限制前 8 個關鍵字以保持高效率
+    for term, sys_code in extracted_terms_to_check[:40]: # 擴大限制至前 40 個關鍵字以編碼更多項目
         res = search_medical_code(term, sys_code, umls_api_key)
         if res:
             system_uri_map = {
