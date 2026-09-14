@@ -648,8 +648,8 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
-    結合 Gemini 智慧關鍵字/實體萃取（目標 100 個以上）、UMLS API 驗證，
-    從非結構化分析報告中精確提取臨床關鍵字與實體，經編碼比對過濾後轉換為標準 R4 FHIR Bundle。
+    結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
+    從非結構化分析報告中精確提取臨床關鍵字與實體，轉換為標準 R4 FHIR Bundle。
     """
     import google.generativeai as genai
     import json
@@ -661,23 +661,38 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     from uuid import uuid4
     import time
 
+    # ✅ 確保在此處正確定義 Pydantic Schema
+    class FlatClinicalEntity(BaseModel):
+        mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
+        begin: int = Field(description="Character index where mention begins in the note")
+        end: int = Field(description="Character index where mention ends in the note")
+        text: str = Field(description="Exact clinical keyword/entity text extracted from the report")
+        polarity: int = Field(description="0 for positive mention, -1 for negated mention")
+        codingScheme: str = Field(description="Must be 'SNOMEDCT' for diseases/symptoms, or 'RXNORM' for medications, or 'LOINC' for observations")
+        code: str = Field(description="The standard code from the chosen system.")
+        cui: str = Field(description="A realistic UMLS Concept Unique Identifier")
+        tui: str = Field(description="A realistic UMLS Semantic Type Unique Identifier")
+
+    class FlatCtakesInput(BaseModel):
+        entities: List[FlatClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
+
     class SimpleClinicalEntity(BaseModel):
         text: str = Field(description="Exact clinical keyword/entity text extracted from the report")
-        mention_type: str = Field(description="Must be 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
+        mention_type: str = Field(description="Must be exactly 'DiseaseDisorderMention', 'MedicationMention', 'SignSymptomMention', 'ProcedureMention', or 'AnatomicalSiteMention'")
 
     class SimpleKeywordInput(BaseModel):
-        entities: List[SimpleClinicalEntity] = Field(description="List of extracted key clinical entities and keywords (aim for 100+ terms)")
+        entities: List[SimpleClinicalEntity] = Field(description="List of extracted key clinical entities and keywords from the report")
 
+    # 1. 取得使用者在側邊欄設定的 UMLS API Key
     umls_api_key = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
     
+    # 2. 透過 Gemini 動態從報告中萃取關鍵醫學名詞/實體
     genai.configure(api_key=api_key)
     extractor_model = genai.GenerativeModel("gemini-2.5-pro")
     
-    # 💡 提示詞調整：強制要求模型萃取 100 個以上的術語
     extraction_prompt = f"""
-You are an exhaustive and high-capacity clinical keyword and entity extraction engine.
-Analyze the following clinical metagenomic analysis report and extract AT LEAST 100 TO 150 DISTINCT medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications.
-Be extremely thorough and granular. Extract every possible clinical mention.
+You are an exhaustive clinical keyword and entity extraction engine.
+Analyze the following clinical metagenomic analysis report, extract AT LEAST 100 TO 150 medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications as distinct keywords.
 
 Report Text:
 \"\"\"
@@ -710,13 +725,12 @@ Report Text:
                 elif "Observation" in m_type or "Sign" in m_type:
                     sys_target = "LNC"
                 extracted_terms_to_check.append((t_str, sys_target))
-    except Exception as e:
-        print(f"Extraction warning: {e}")
+    except Exception:
+        pass
 
-    # 💡 透過 UMLS API 進行大規模動態關鍵字標準編碼查詢（擴大至前 150 個）
+    # 3. 透過 UMLS API 進行動態關鍵字標準編碼查詢 (擴大至前 150 個以滿足大於 100 個術語的需求)
     umls_resolved_codings = []
     seen_terms = set()
-    
     for term, sys_code in extracted_terms_to_check[:150]:
         if term.lower() in seen_terms:
             continue
