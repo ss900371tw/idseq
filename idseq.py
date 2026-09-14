@@ -1035,41 +1035,68 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
         "Beta-lactam", "Tetracycline", "Vancomycin", "Ciprofloxacin", "Metformin"
     ]
 
-    matched_terms_list = []
-
-    # A. 優先掃描上傳檔案的 CSV 內容
+    # A. 優先掃描上傳檔案的 CSV 內容 (最多 10 個)
+    file_terms = []
     if file_contents:
         file_text = " ".join(str(val) for val in file_contents.values()).lower()
         for term in candidate_terms:
-            if term not in matched_terms_list:
-                if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
-                    matched_terms_list.append(term)
+            if len(file_terms) >= 10:
+                break
+            if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
+                if term not in file_terms:
+                    file_terms.append(term)
 
-    # B. 接著掃描當前患者的臨床病症 (Conditions / 臨床病歷)
+    # B. 接著掃描當前患者的臨床病歷 (FHIR Clinical Records: Conditions, Medications, Procedures, Labs) (最多 10 個)
+    records_terms = []
     if st.session_state.get("active_patient_demographics"):
         p_id = st.session_state.active_patient_demographics.get("id")
         try:
-            # 取得該患者當前所有診斷，用於強化知識圖譜檢索的精準度
-            conditions = get_fhir_patient_details(
-                st.session_state.fhir_url,
-                p_id,
-                st.session_state.get("fhir_token")
-            )
+            conditions = get_fhir_patient_details(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
+            medications = get_fhir_patient_medications(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
+            procedures = get_fhir_patient_procedures(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
+            vitals, labs = get_fhir_patient_observations(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
+            
+            clinical_texts = []
             if conditions:
-                cond_text = " ".join(conditions).lower()
-                for term in candidate_terms:
-                    if term not in matched_terms_list:
-                        if re.search(r'\b' + re.escape(term.lower()) + r'\b', cond_text) or term.lower() in cond_text:
-                            matched_terms_list.append(term)
+                clinical_texts.extend(conditions)
+            if medications:
+                clinical_texts.extend(medications)
+            if procedures:
+                clinical_texts.extend(procedures)
+            if labs:
+                clinical_texts.extend(list(labs.keys()))
+                
+            clinical_text = " ".join(clinical_texts).lower()
+            for term in candidate_terms:
+                if len(records_terms) >= 10:
+                    break
+                if re.search(r'\b' + re.escape(term.lower()) + r'\b', clinical_text) or term.lower() in clinical_text:
+                    if term not in records_terms:
+                        records_terms.append(term)
         except Exception:
             pass
 
     # C. 最後掃描 Query (例如分析模式名稱)
+    query_terms = []
     query_lower = query.lower()
     for term in candidate_terms:
+        if re.search(r'\b' + re.escape(term.lower()) + r'\b', query_lower) or term.lower() in query_lower:
+            if term not in query_terms:
+                query_terms.append(term)
+
+    # 合併關鍵字 (保留優先順序，去重)
+    matched_terms_list = []
+    for term in file_terms:
         if term not in matched_terms_list:
-            if re.search(r'\b' + re.escape(term.lower()) + r'\b', query_lower) or term.lower() in query_lower:
-                matched_terms_list.append(term)
+            matched_terms_list.append(term)
+            
+    for term in records_terms:
+        if term not in matched_terms_list:
+            matched_terms_list.append(term)
+            
+    for term in query_terms:
+        if term not in matched_terms_list:
+            matched_terms_list.append(term)
 
     # 如果還是完全無匹配，不要自動帶入預設的關鍵字，直接返回並記錄提示
     if not matched_terms_list:
@@ -1079,6 +1106,15 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
 
     context_sections = []
     context_sections.append("🌐 [MetagenomicKG Knowledge Graph Live Retrieval Result]")
+    
+    # 建立關鍵字萃取與合併的可視化摘要
+    summary_text = (
+        "🔑 **知識圖譜關鍵字萃取與合併摘要 (MetagenomicKG Keywords Extraction Summary):**\n"
+        f"- 📄 **上傳檔案關鍵字 (Uploaded Files) (最多10個):** {', '.join(file_terms) if file_terms else '無匹配'}\n"
+        f"- 📋 **臨床病歷關鍵字 (FHIR Clinical Records) (最多10個):** {', '.join(records_terms) if records_terms else '無匹配'}\n"
+        f"- 🎯 **合併檢索關鍵字 (Merged Keywords):** {', '.join(matched_terms_list) if matched_terms_list else '無匹配'}\n"
+    )
+    context_sections.append(summary_text)
 
     uri = "bolt://mkg.cse.psu.edu:7687"
     auth = ("neo4j", "klabneo4j")
