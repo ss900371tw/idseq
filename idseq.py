@@ -736,7 +736,6 @@ Report Text:
                 "system": system_uri_map.get(sys_code, "http://snomed.info/sct")
             })
 
-    # 後續建構 cTAKES JSON 與 FHIR Bundle 邏輯維持不變...
     # 4. 結合 ITRI 智慧編碼機制
     itri_codings = []
     polished_note = report_markdown
@@ -952,6 +951,29 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
         import sys
         print(f"❌ [FHIR Converter Error] {e}", file=sys.stderr)
         raise e
+
+def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
+    """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
+    try:
+        if resource_type == "Bundle" and resource_json.get("type") in ["transaction", "batch"]:
+            url = server_url.rstrip("/")
+        else:
+            url = f"{server_url.rstrip('/')}/{resource_type}"
+
+        headers = {
+            "Content-Type": "application/fhir+json",
+            "Accept": "application/fhir+json"
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            
+        resp = requests.post(url, json=resource_json, headers=headers, timeout=5)
+        if resp.status_code in [200, 201]:
+            return True, resp.json().get("id")
+        else:
+            return False, f"HTTP {resp.status_code}: {resp.text}"
+    except Exception as e:
+        return False, str(e)
 
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
     """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
