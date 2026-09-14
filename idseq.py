@@ -946,20 +946,16 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
                 
             standard_entries.append({"resource": res_dict, "request": {"method": "POST", "url": res_dict["resourceType"]}})
             
-        raw_bundle = {
+        return {
             "resourceType": "Bundle",
             "type": "transaction",
             "entry": standard_entries
         }
-
-        # ✅ 執行防幻覺與一致性校驗與修正
-        validated_bundle = validate_and_correct_fhir_bundle(raw_bundle, umls_api_key)
-        return validated_bundle
-        
     except Exception as e:
         import sys
         print(f"❌ [FHIR Converter Error] {e}", file=sys.stderr)
         raise e
+
 
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
     """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
