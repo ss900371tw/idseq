@@ -1743,6 +1743,22 @@ def main():
     )
     st.session_state.user_gemini_key = user_api_key
 
+    # ---------- UMLS API 金鑰配置 ----------
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔑 UMLS API 金鑰配置")
+    
+    # 預設帶入原設定之金鑰，一開始不要空白
+    default_umls_key_val = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
+
+    st.session_state.user_umls_key = default_umls_key_val
+    user_umls_key = st.sidebar.text_input(
+        "輸入 UMLS API 金鑰",
+        value=default_umls_key_val,
+        type="password",
+        help="輸入您的 UMLS API 金鑰。預設已自動帶入系統內置的金鑰。"
+    )
+    st.session_state.user_umls_key = user_umls_key
+
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
     if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics:
         p = st.session_state.active_patient_demographics
