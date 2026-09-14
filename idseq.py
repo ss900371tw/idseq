@@ -1035,18 +1035,80 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
         "Beta-lactam", "Tetracycline", "Vancomycin", "Ciprofloxacin", "Metformin"
     ]
 
+    def extract_keywords_via_gemini(text: str, category_name: str, max_count: int = 10) -> list:
+        """
+        使用 Gemini 2.5 動態、開放式地從文本中提取最關鍵的臨床/微生物關鍵字。
+        """
+        import json
+        import google.generativeai as genai
+        from pydantic import BaseModel, Field
+        from typing import List
+
+        api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
+        if not api_key:
+            return []
+
+        try:
+            genai.configure(api_key=api_key)
+            model_flash = genai.GenerativeModel("gemini-2.5-flash") # 快速、廉價且精確
+            
+            class KeywordList(BaseModel):
+                keywords: List[str] = Field(description=f"List of up to {max_count} clinical, medical, or microbiological keywords")
+
+            prompt = f"""
+You are an expert clinical NLP keyword extraction tool.
+Analyze the following clinical/microbiological text ({category_name}) and extract the most relevant clinical keywords.
+These can be pathogens (bacteria, viruses, fungi, parasites, e.g., 'Syphilis', 'Streptococcus', 'Varicella-zoster', 'Gonorrhea', 'Hepatitis B', 'Chlamydia'), active infections/diseases/conditions (e.g., 'Cystic fibrosis', 'Sepsis', 'Poisoning', 'Pharyngitis', 'Sinusitis'), medications (e.g., 'Vancomycin', 'Epinephrine', 'Cetirizine'), or major infection/immune procedures (e.g., 'Allergy screening').
+
+Instructions:
+1. Extract at most {max_count} distinct keywords.
+2. Ensure each keyword is a standard English medical/biological term (no dates, no codes, no generic punctuation).
+3. Do not invent keywords; only extract terms that are explicitly mentioned in the text.
+4. Keep the terms concise (e.g., use 'Syphilis', 'Streptococcus', 'Epinephrine', 'Allergy screening').
+5. STRICT CRITICAL CONSTRAINT: DO NOT extract social history (like 'Tobacco smoking', 'Alcohol', 'Occupation'), basic physical measurements/vitals (like 'Body Height', 'Body Weight', 'Blood pressure', 'Heart rate', 'Respiratory rate'), or non-specific common CBC labs (like 'Leukocytes', 'Erythrocytes', 'Hemoglobin', 'Platelets', 'Hematocrit') unless they are explicitly of high-signal diagnostic value for an infection or active pathology. Focus strictly on pathogens, diagnoses, drugs, and relevant immune/infection procedures.
+
+Text:
+\"\"\"
+{text[:8000]}
+\"\"\"
+"""
+            response = model_flash.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    response_schema=KeywordList
+                )
+            )
+            raw_res = response.text.strip()
+            if raw_res.startswith("```json"):
+                raw_res = raw_res.split("```json")[1].split("```")[0].strip()
+            elif raw_res.startswith("```"):
+                raw_res = raw_res.split("```")[1].split("```")[0].strip()
+            data = json.loads(raw_res)
+            return [kw.strip() for kw in data.get("keywords", []) if kw.strip()][:max_count]
+        except Exception:
+            return []
+
     # A. 優先掃描上傳檔案的 CSV 內容 (最多 10 個)
     file_terms = []
+    extraction_method = "Gemini Dynamic Extraction (動態開放式智慧萃取)"
     if file_contents:
-        file_text = " ".join(str(val) for val in file_contents.values()).lower()
-        for term in candidate_terms:
-            if len(file_terms) >= 10:
-                break
-            if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text) or term.lower() in file_text:
-                if term not in file_terms:
-                    file_terms.append(term)
+        file_text = " ".join(str(val) for val in file_contents.values())
+        # 1. 嘗試使用 Gemini 動態提取
+        file_terms = extract_keywords_via_gemini(file_text, "Uploaded Files", 10)
+        
+        # 2. 如果動態提取失敗或返回空，則啟用本地 Heuristic 備用方案
+        if not file_terms:
+            extraction_method = "Local Heuristic Fallback (本地靜態名詞備用方案)"
+            file_text_lower = file_text.lower()
+            for term in candidate_terms:
+                if len(file_terms) >= 10:
+                    break
+                if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text_lower) or term.lower() in file_text_lower:
+                    if term not in file_terms:
+                        file_terms.append(term)
 
-    # B. 接著掃描當前患者的臨床病歷 (FHIR Clinical Records: Conditions, Medications, Procedures, Labs) (最多 10 個)
+    # B. 接著掃描當前患者的臨床病歷 (FHIR Clinical Records: 疾病診斷, 藥物處方, 醫療處置與手術) (最多 10 個)
     records_terms = []
     if st.session_state.get("active_patient_demographics"):
         p_id = st.session_state.active_patient_demographics.get("id")
@@ -1054,7 +1116,6 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
             conditions = get_fhir_patient_details(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
             medications = get_fhir_patient_medications(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
             procedures = get_fhir_patient_procedures(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
-            vitals, labs = get_fhir_patient_observations(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
             
             clinical_texts = []
             if conditions:
@@ -1063,26 +1124,22 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
                 clinical_texts.extend(medications)
             if procedures:
                 clinical_texts.extend(procedures)
-            if labs:
-                clinical_texts.extend(list(labs.keys()))
                 
-            clinical_text = " ".join(clinical_texts).lower()
-            for term in candidate_terms:
-                if len(records_terms) >= 10:
-                    break
-                if re.search(r'\b' + re.escape(term.lower()) + r'\b', clinical_text) or term.lower() in clinical_text:
-                    if term not in records_terms:
-                        records_terms.append(term)
+            clinical_text = " ".join(clinical_texts)
+            # 1. 嘗試使用 Gemini 動態提取
+            records_terms = extract_keywords_via_gemini(clinical_text, "FHIR Clinical Records", 10)
+            
+            # 2. 如果動態提取失敗或返回空，則啟用本地 Heuristic 備用方案
+            if not records_terms:
+                clinical_text_lower = clinical_text.lower()
+                for term in candidate_terms:
+                    if len(records_terms) >= 10:
+                        break
+                    if re.search(r'\b' + re.escape(term.lower()) + r'\b', clinical_text_lower) or term.lower() in clinical_text_lower:
+                        if term not in records_terms:
+                            records_terms.append(term)
         except Exception:
             pass
-
-    # C. 最後掃描 Query (例如分析模式名稱)
-    query_terms = []
-    query_lower = query.lower()
-    for term in candidate_terms:
-        if re.search(r'\b' + re.escape(term.lower()) + r'\b', query_lower) or term.lower() in query_lower:
-            if term not in query_terms:
-                query_terms.append(term)
 
     # 合併關鍵字 (保留優先順序，去重)
     matched_terms_list = []
@@ -1093,14 +1150,10 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
     for term in records_terms:
         if term not in matched_terms_list:
             matched_terms_list.append(term)
-            
-    for term in query_terms:
-        if term not in matched_terms_list:
-            matched_terms_list.append(term)
 
     # 如果還是完全無匹配，不要自動帶入預設的關鍵字，直接返回並記錄提示
     if not matched_terms_list:
-        msg = "⚠️ 未在查詢、患者病歷或上傳檔案中偵測到任何相關的 MetagenomicKG 關鍵字，因此未執行圖資料庫檢索。"
+        msg = "⚠️ 未在上傳檔案或患者病歷中偵測到任何相關的 MetagenomicKG 關鍵字，因此未執行圖資料庫檢索。"
         st.session_state.kg_context_retrieved = msg
         return msg
 
@@ -1109,7 +1162,7 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
     
     # 建立關鍵字萃取與合併的可視化摘要
     summary_text = (
-        "🔑 **知識圖譜關鍵字萃取與合併摘要 (MetagenomicKG Keywords Extraction Summary):**\n"
+        f"🔑 **知識圖譜關鍵字開放式動態萃取與合併摘要 (Keywords Extraction Strategy: {extraction_method}):**\n"
         f"- 📄 **上傳檔案關鍵字 (Uploaded Files) (最多10個):** {', '.join(file_terms) if file_terms else '無匹配'}\n"
         f"- 📋 **臨床病歷關鍵字 (FHIR Clinical Records) (最多10個):** {', '.join(records_terms) if records_terms else '無匹配'}\n"
         f"- 🎯 **合併檢索關鍵字 (Merged Keywords):** {', '.join(matched_terms_list) if matched_terms_list else '無匹配'}\n"
@@ -1122,8 +1175,8 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
     try:
         driver = GraphDatabase.driver(uri, auth=auth)
         with driver.session() as session:
-            # 使用有序的 matched_terms_list，直接依據優先權順序（檔案 -> 病歷 -> Query）取出前 10 個
-            for term in matched_terms_list[:10]:  # 限制最多檢索 10 個最相關的主題詞以保持 Context 效率
+            # 遍歷所有的 matched_terms_list，檢索所有匹配到的臨床關鍵字，不再設有數量限制
+            for term in matched_terms_list:
                 context_sections.append(f"📌 Knowledge Graph Context for: '{term}'")
                 
                 # A. 檢索疾病資訊
