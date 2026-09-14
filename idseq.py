@@ -692,7 +692,7 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     
     extraction_prompt = f"""
 You are an exhaustive clinical keyword and entity extraction engine.
-Analyze the following clinical metagenomic analysis report, extract AT LEAST 500 TO 1000 medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications as distinct keywords.
+Analyze the following clinical metagenomic analysis report, extract AT LEAST 200 TO 300 medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications as distinct keywords.
 
 Report Text:
 \"\"\"
