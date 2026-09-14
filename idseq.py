@@ -509,22 +509,13 @@ def upload_report_to_fhir(server_url, patient_id, report_markdown, report_title,
     except Exception as e:
         return False, str(e)
 
-_umls_search_cache = {}
-
 def search_medical_code(string_term, target_system, api_key):
     """
-    透過 UMLS API 查詢醫學名詞的標準編號 (內建 Module-level 記憶快取)
+    透過 UMLS API 查詢醫學名詞的標準編號
     :param string_term: 醫學名詞 (例如: 'Diabetes', 'Metformin', 'Glucose')
     :param target_system: 限制的術語庫系統代碼 ('SNOMEDCT_US', 'LOINC', 'RXNORM')
     :param api_key: 你的 UMLS API Key
     """
-    if not string_term or not string_term.strip():
-        return None
-        
-    cache_key = (string_term.strip().lower(), target_system)
-    if cache_key in _umls_search_cache:
-        return _umls_search_cache[cache_key]
-
     url = "https://uts-ws.nlm.nih.gov/rest/search/current"
     
     params = {
@@ -542,25 +533,22 @@ def search_medical_code(string_term, target_system, api_key):
         
         results = data.get('result', {}).get('results', [])
         if not results:
-            _umls_search_cache[cache_key] = None
             return None
             
         # 回傳第一筆最相關的結果
         best_match = results[0]
-        res_data = {
+        return {
             "code": best_match.get('ui'),
             "name": best_match.get('name')
         }
-        _umls_search_cache[cache_key] = res_data
-        return res_data
-    except Exception:
+    except requests.exceptions.RequestException:
         return None
 
 def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     """
     嚴格品質與存在性驗證（拒絕接收模式）：
     1. 檢查代碼格式與系統對應性。
-    2. 透過 UMLS API 進行真實性與存在性驗證（使用記憶快取且當已有合規代碼時略過連網以保證極致效能）。
+    2. 透過 UMLS API 進行真實性與存在性驗證。
     3. 若驗證失敗或導致 coding 陣列為空 []，則直接「拒絕接收」該筆資源，
        不保留任何未編碼的純文字項目，徹底排除幻覺與不合格資料。
     """
@@ -594,22 +582,17 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
         for cc, r_type in concepts_to_check:
             display_text = cc.get("text", "").strip()
             codings = cc.get("coding", [])
-
+            
             valid_codings = []
             for coding in codings:
                 sys_uri = coding.get("system")
                 code_val = str(coding.get("code", ""))
-                display_val = coding.get("display", display_text) or display_text
+                display_val = coding.get("display", display_text)
                 
-                # 1. 基礎格式與存在性判定
-                is_code_format_valid = False
-                if sys_uri == "http://loinc.org" and code_val and "-" in code_val:
-                    is_code_format_valid = True
-                elif sys_uri in ["http://snomed.info/sct", "http://www.nlm.nih.gov/research/umls/rxnorm"] and code_val and code_val.isdigit():
-                    is_code_format_valid = True
-
-                # 若代碼格式不正確，且非為空，則直接捨棄
-                if code_val and not is_code_format_valid:
+                # 1. 基礎格式驗證
+                if sys_uri == "http://loinc.org" and "-" not in code_val:
+                    continue
+                if sys_uri in ["http://snomed.info/sct", "http://www.nlm.nih.gov/research/umls/rxnorm"] and not code_val.isdigit():
                     continue
 
                 # 2. 系統與資源類型一致性檢查
@@ -618,17 +601,16 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
                 if r_type == "MedicationRequest" and sys_uri != "http://www.nlm.nih.gov/research/umls/rxnorm":
                     continue
 
-                # 3. UMLS 存在性與品質驗證（若已有正確代碼，則直接判定有效並略過查詢以保護 API 額度並加速）
+                # 3. UMLS 存在性與品質驗證
                 if sys_uri in system_map_reverse and display_val:
-                    if not is_code_format_valid:
-                        target_sabs = system_map_reverse[sys_uri]
-                        verified_res = search_medical_code(display_val, target_sabs, umls_api_key)
-                        
-                        if not verified_res:
-                            continue  # 查無對應，捨棄此 coding
-                        else:
-                            coding["code"] = verified_res["code"]
-                            coding["display"] = verified_res["name"]
+                    target_sabs = system_map_reverse[sys_uri]
+                    verified_res = search_medical_code(display_val, target_sabs, umls_api_key)
+                    
+                    if not verified_res:
+                        continue  # 查無對應，捨棄此 coding
+                    else:
+                        coding["code"] = verified_res["code"]
+                        coding["display"] = verified_res["name"]
                 
                 valid_codings.append(coding)
             
@@ -946,16 +928,20 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
                 
             standard_entries.append({"resource": res_dict, "request": {"method": "POST", "url": res_dict["resourceType"]}})
             
-        return {
+        raw_bundle = {
             "resourceType": "Bundle",
             "type": "transaction",
             "entry": standard_entries
         }
+
+        # ✅ 執行防幻覺與一致性校驗與修正
+        validated_bundle = validate_and_correct_fhir_bundle(raw_bundle, umls_api_key)
+        return validated_bundle
+        
     except Exception as e:
         import sys
         print(f"❌ [FHIR Converter Error] {e}", file=sys.stderr)
         raise e
-
 
 def upload_fhir_resource(server_url, resource_type, resource_json, token=None):
     """將現成的 FHIR JSON 資源上傳儲存至 FHIR 伺服器"""
@@ -1756,20 +1742,6 @@ def main():
         help="輸入您的 Gemini API 金鑰。預設已自動帶入系統內置的金鑰。"
     )
     st.session_state.user_gemini_key = user_api_key
-
-    # ---------- UMLS API 金鑰配置 ----------
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔑 UMLS API 金鑰配置")
-    
-    default_umls_key_val = st.session_state.get("user_umls_key", "d6fbdc40-6f90-484a-a8a7-14c919cdfda0")
-    st.session_state.user_umls_key = default_umls_key_val
-    user_umls_key = st.sidebar.text_input(
-        "輸入 UMLS API 金鑰",
-        value=default_umls_key_val,
-        type="password",
-        help="輸入您的 UMLS API 金鑰以用於 Text-to-FHIR 術語驗證。預設已自動帶入內置的金鑰。"
-    )
-    st.session_state.user_umls_key = user_umls_key
 
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
     if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics:
