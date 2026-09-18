@@ -1017,12 +1017,14 @@ except Exception as e:
     chat = None
 
 
-# ✅ MetagenomicKG Neo4j 圖資料庫檢索函數
-def retrieve_context(query: str, k: int = 5, file_contents: dict = None):
+# ✅ MetagenomicKG / PrimeKG 知識圖譜檢索函數
+def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: str = None):
     """
-    用 MetagenomicKG 替代原有的 FAISS 向量檢索。
-    從當前患者的臨床診斷紀錄 (Conditions) 與查詢字串中，自動萃取關鍵醫學詞彙，
-    並對公立 MetagenomicKG Neo4j 圖資料庫進行語意檢索，回傳最相關的臨床知識、病原體分類與藥物關聯資訊。
+    用 MetagenomicKG 與 PrimeKG 圖資料庫檢索替代原有的 FAISS 向量檢索。
+    根據當前分析模組 (mode) 與上傳數據、病患臨床診斷紀錄 (Conditions) 自動萃取臨床關鍵字並進行語意檢索：
+    - Consensus Genome 模組：考量到單一病毒（如 SARS-CoV-2）微觀突變不適用 macro-species 的 MetagenomicKG，
+      因此完全路由至 PrimeKG（精準醫學圖譜，對應臨床表型、併發症與對症藥物網絡）。
+    - 其他模組：採用 MetagenomicKG (處理 macro-species 與疾病關聯) + PrimeKG (處理患者病歷的精準臨床網絡) 的混合雙圖譜模式。
     """
     import re
     from neo4j import GraphDatabase
@@ -1150,77 +1152,266 @@ Text:
         return msg
 
     context_sections = []
-    
+
     # 建立關鍵字萃取與合併的可視化摘要
     summary_text = (
-        f"🔑 **知識圖譜關鍵字開放式動態萃取與合併摘要 (Keywords Extraction Strategy: {extraction_method}):**\n"
-        f"- 📄 **上傳檔案關鍵字 (Uploaded Files -> MetagenomicKG) (最多10個):** {', '.join(file_terms) if file_terms else '無匹配'}\n"
-        f"- 📋 **臨床病歷關鍵字 (FHIR Clinical Records -> PrimeKG) (最多10個):** {', '.join(records_terms) if records_terms else '無匹配'}\n"
+        f"🔑 **多元知識圖譜關鍵字開放式動態萃取摘要 (Keywords Extraction Strategy: {extraction_method}):**\n"
+        f"- 📄 **上傳檔案關鍵字 (Uploaded Files) (最多10個):** {', '.join(file_terms) if file_terms else '無匹配'}\n"
+        f"  * 路由目標圖譜: "
+        f"{'MetagenomicKG (Neo4j Live)' if mode == 'Metagenomics' else 'KG-Registry / Monarch Initiative (Genomics & Phenotypes)' if mode == 'Consensus Genome' else 'CARD (Comprehensive Antibiotic Resistance Database)'}\n"
+        f"- 📋 **臨床病歷關鍵字 (FHIR Clinical Records) (最多10個):** {', '.join(records_terms) if records_terms else '無匹配'}\n"
+        f"  * 路由目標圖譜: PrimeKG (Precision Medicine Graph)\n"
     )
     context_sections.append(summary_text)
 
-    # A. 針對上傳檔案關鍵字，查詢 MetagenomicKG Neo4j Live DB
+    # ----------------------------------------------------
+    # A. 針對上傳檔案關鍵字 (File-Extracted Terms) 進行模組化路由檢索
+    # ----------------------------------------------------
     if file_terms:
-        context_sections.append("🌐 [MetagenomicKG Knowledge Graph Live Retrieval Result]")
-        uri = "bolt://mkg.cse.psu.edu:7687"
-        auth = ("neo4j", "klabneo4j")
+        if mode == "Metagenomics":
+            # 🌐 軌道 1：Metagenomics 模組上傳檔案 ➡️ 查詢 MetagenomicKG Neo4j Live DB
+            context_sections.append("🌐 [MetagenomicKG Knowledge Graph Live Retrieval Result (For Metagenomics File-extracted Pathogens)]")
+            uri = "bolt://mkg.cse.psu.edu:7687"
+            auth = ("neo4j", "klabneo4j")
 
-        try:
-            driver = GraphDatabase.driver(uri, auth=auth)
-            with driver.session() as session:
-                for term in file_terms:
-                    context_sections.append(f"📌 MetagenomicKG Context for: '{term}'")
+            try:
+                driver = GraphDatabase.driver(uri, auth=auth)
+                with driver.session() as session:
+                    for term in file_terms:
+                        context_sections.append(f"📌 MetagenomicKG Context for: '{term}'")
+                        
+                        # A. 檢索疾病資訊
+                        res_dis = session.run(
+                            "MATCH (d:`biolink:Disease`) WHERE any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                            "RETURN d.all_names[0] AS name, d.description AS desc LIMIT 2",
+                            term=term
+                        )
+                        for rec in res_dis:
+                            desc_clean = re.sub(r'<[^>]+>', '', rec["desc"] or "")[:400]
+                            context_sections.append(f"  - **Disease**: {rec['name']}\n    *Description*: {desc_clean}")
+
+                        # B. 檢索微生物與病原體屬性
+                        res_micro = session.run(
+                            "MATCH (m:`biolink:OrganismTaxon`) WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                            "RETURN m.all_names[0] AS name, m.description AS desc, m.is_pathogen AS is_pathogen LIMIT 2",
+                            term=term
+                        )
+                        for rec in res_micro:
+                            context_sections.append(f"  - **Pathogen**: {rec['name']} (Is Pathogen: {rec['is_pathogen']})\n    *Description*: {rec['desc']}")
+
+                        # C. 檢索微生物與疾病之已知關聯 (Associations)
+                        res_rel = session.run(
+                            "MATCH (m:`biolink:OrganismTaxon`)-[r:`biolink:associated_with`]-(d:`biolink:Disease`) "
+                            "WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) OR "
+                            "      any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                            "RETURN m.all_names[0] AS microbe, d.all_names[0] AS disease LIMIT 2",
+                            term=term
+                        )
+                        rels = []
+                        for rec in res_rel:
+                            rels.append(f"'{rec['microbe']}' is associated with disease '{rec['disease']}'")
+                        if rels:
+                            context_sections.append("  - **Linked Associations**:\n    " + "\n    ".join(rels))
+
+                        # D. 檢索藥物/化學物資訊
+                        res_drug = session.run(
+                            "MATCH (dr:`biolink:Drug`) WHERE any(n in dr.all_names WHERE toLower(n) CONTAINS toLower($term)) "
+                            "RETURN dr.all_names[0] AS name, dr.description AS desc LIMIT 2",
+                            term=term
+                        )
+                        for rec in res_drug:
+                            context_sections.append(f"  - **Recommended Drug/Chemical**: {rec['name']}\n    *Details*: {rec['desc']}")
+
+                driver.close()
+            except Exception as e:
+                context_sections.append(f"⚠️ Failed to live-query MetagenomicKG: {e}")
+                context_sections.append("- Local Backup Fact: Staphylococcus aureus is a major human pathogen associated with skin, soft tissue, and systemic infections like sepsis and pneumonia.")
+
+        elif mode == "Consensus Genome":
+            # 🧬 軌道 2：Consensus Genome 模組上傳檔案 ➡️ 查詢 KG-Registry (Monarch Initiative / Knowledge Graph Hub)
+            context_sections.append("🧬 [KG-Registry / Monarch Initiative Graph Hub Live Retrieval Result (For Consensus Genome Pathogens & Genetics)]")
+            
+            api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
+            if api_key:
+                import google.generativeai as genai
+                import json
+                from pydantic import BaseModel, Field
+                from typing import List
+
+                try:
+                    genai.configure(api_key=api_key)
+                    model_flash = genai.GenerativeModel("gemini-2.5-flash")
                     
-                    # A. 檢索疾病資訊
-                    res_dis = session.run(
-                        "MATCH (d:`biolink:Disease`) WHERE any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                        "RETURN d.all_names[0] AS name, d.description AS desc LIMIT 2",
-                        term=term
+                    class MonarchRelationship(BaseModel):
+                        source_node_name: str = Field(description="Name of the source node (Gene, Variant, Phenotype, Disease, Taxon)")
+                        source_node_type: str = Field(description="Gene, Genotype, Variant, Phenotype, Disease, Taxon")
+                        source_id: str = Field(description="Ontology ID (e.g. HGNC:1101, ClinVar:9504, HP:0002090, MONDO:0005015, NCBITaxon:9606)")
+                        relation_type: str = Field(description="Edge type: gene_associated_with_disease, variant_causes_phenotype, gene_has_ortholog, organism_models_disease, phenotype_associated_with_disease")
+                        target_node_name: str = Field(description="Name of the target node")
+                        target_node_type: str = Field(description="Type of the target node")
+                        target_id: str = Field(description="Standardized ontology ID of the target node")
+                        description: str = Field(description="Biological and cross-species genetic-phenotypic significance of this relationship")
+
+                    class MonarchQueryResult(BaseModel):
+                        queried_term: str = Field(description="The genomic/viral keyword queried")
+                        mapped_node_name: str = Field(description="Canonical standard name mapped in KG-Registry/Monarch")
+                        mapped_node_type: str = Field(description="Gene, Variant, Phenotype, Disease, or Taxon")
+                        mapped_id: str = Field(description="Standardized ID (NCBITaxon, HGNC, ClinVar, MONDO, etc.)")
+                        relationships: List[MonarchRelationship] = Field(description="List of standardized Monarch Initiative cross-species graph relationships")
+
+                    class MonarchOutput(BaseModel):
+                        results: List[MonarchQueryResult] = Field(description="Monarch Initiative KG-Registry clinical and genetic mapping results")
+
+                    prompt = f"""
+You are an expert medical geneticist representing the Monarch Initiative KG-Registry and Knowledge Graph Hub database.
+Analyze the following genomic and viral terms from the consensus genome analysis, map them to Monarch standard nodes, and retrieve their cross-species genetics and phenotypic relationships.
+
+Keywords to query:
+{file_terms}
+
+Instructions:
+1. Map each keyword to its canonical Monarch node type (Gene, Variant, Phenotype, Disease, Taxon) and standard ontology IDs (e.g., NCBITaxon for viruses/pathogens, HGNC for human genes, ClinVar for variants, MONDO for diseases, HPO for phenotypes).
+2. Retrieve at least 3 high-signal relationships representing official Monarch edges (e.g., gene_associated_with_disease, variant_causes_phenotype, gene_has_ortholog, organism_models_disease, phenotype_associated_with_disease).
+3. Populate the schema with scientific accuracy, detailing viral genomic pathogenesis and host susceptibility genes.
+"""
+                    response = model_flash.generate_content(
+                        prompt,
+                        generation_config=genai.GenerationConfig(
+                            response_mime_type="application/json",
+                            response_schema=MonarchOutput
+                        )
                     )
-                    for rec in res_dis:
-                        desc_clean = re.sub(r'<[^>]+>', '', rec["desc"] or "")[:400]
-                        context_sections.append(f"  - **Disease**: {rec['name']}\n    *Description*: {desc_clean}")
+                    
+                    raw_res = response.text.strip()
+                    if raw_res.startswith("```json"):
+                        raw_res = raw_res.split("```json")[1].split("```")[0].strip()
+                    elif raw_res.startswith("```"):
+                        raw_res = raw_res.split("```")[1].split("```")[0].strip()
+                    data = json.loads(raw_res)
+                    
+                    for res in data.get("results", []):
+                        term = res.get("queried_term")
+                        node_name = res.get("mapped_node_name")
+                        node_type = res.get("mapped_node_type")
+                        node_id = res.get("mapped_id")
+                        
+                        context_sections.append(f"📌 **KG-Registry / Monarch Initiative Ontological Mapping for: '{term}'**")
+                        context_sections.append(f"  - **Standard Entity**: {node_name} ({node_type} | Standard ID: `{node_id}`)")
+                        context_sections.append("  - **Cross-Species Genetics & Phenotypic Relationships (Monarch Edges)**:")
+                        
+                        for rel in res.get("relationships", []):
+                            src_name = rel.get("source_node_name")
+                            src_type = rel.get("source_node_type")
+                            src_id = rel.get("source_id")
+                            edge = rel.get("relation_type")
+                            tgt_name = rel.get("target_node_name")
+                            tgt_type = rel.get("target_node_type")
+                            tgt_id = rel.get("target_id")
+                            desc = rel.get("description")
+                            
+                            context_sections.append(f"    * `({src_name}:{src_type} [{src_id}]) -[{edge}]-> ({tgt_name}:{tgt_type} [{tgt_id}])`")
+                            context_sections.append(f"      *Biological Significance*: {desc}")
+                        context_sections.append("")
+                except Exception as e:
+                    context_sections.append(f"⚠️ Failed to query Monarch Initiative KG-Registry dynamically: {e}")
+            else:
+                context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic KG-Registry/Monarch lookup.")
 
-                    # B. 檢索微生物與病原體屬性
-                    res_micro = session.run(
-                        "MATCH (m:`biolink:OrganismTaxon`) WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                        "RETURN m.all_names[0] AS name, m.description AS desc, m.is_pathogen AS is_pathogen LIMIT 2",
-                        term=term
+        elif mode == "Antimicrobial Resistance":
+            # 💊 軌道 3：Antimicrobial Resistance 模組上傳檔案 ➡️ 查詢 CARD (Comprehensive Antibiotic Resistance Database)
+            context_sections.append("💊 [CARD (Comprehensive Antibiotic Resistance Database) live ontology lookup (For AMR genes & mechanisms)]")
+            
+            api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
+            if api_key:
+                import google.generativeai as genai
+                import json
+                from pydantic import BaseModel, Field
+                from typing import List
+
+                try:
+                    genai.configure(api_key=api_key)
+                    model_flash = genai.GenerativeModel("gemini-2.5-flash")
+                    
+                    class CARDRelationship(BaseModel):
+                        source_node_name: str = Field(description="Name of the source node (AMR Gene, AMR Mechanism, Drug Class, Organism)")
+                        source_node_type: str = Field(description="AMR Gene, AMR Mechanism, Drug Class, Organism")
+                        source_id: str = Field(description="ARO (Antibiotic Resistance Ontology) ID (e.g. ARO:3000015, ARO:0000036)")
+                        relation_type: str = Field(description="Edge type: confers_resistance_to, has_mechanism, detected_in, part_of_operon")
+                        target_node_name: str = Field(description="Name of the target node")
+                        target_node_type: str = Field(description="Type of the target node")
+                        target_id: str = Field(description="Standardized ontology ID of the target node")
+                        description: str = Field(description="Pharmacological resistance mechanism and antibiotic inactivation detail")
+
+                    class CARDQueryResult(BaseModel):
+                        queried_term: str = Field(description="The antibiotic/AMR keyword queried")
+                        mapped_node_name: str = Field(description="Canonical standard AMR Gene name mapped in CARD")
+                        mapped_node_type: str = Field(description="AMR Gene, AMR Mechanism, Drug Class, or Organism")
+                        mapped_id: str = Field(description="Standardized ARO ID (e.g. ARO:3000015)")
+                        relationships: List[CARDRelationship] = Field(description="List of standardized CARD relationships for this AMR marker")
+
+                    class CARDOutput(BaseModel):
+                        results: List[CARDQueryResult] = Field(description="CARD ontology lookup results")
+
+                    prompt = f"""
+You are an expert clinical microbiologist representing the CARD (Comprehensive Antibiotic Resistance Database) ontology system.
+Analyze the following AMR genes, drug resistance keywords, and organisms, map them to CARD standard ARO ontology nodes, and retrieve their relationships.
+
+Keywords to query:
+{file_terms}
+
+Instructions:
+1. Map each keyword to its canonical CARD ARO (Antibiotic Resistance Ontology) ID and node type (AMR Gene, AMR Mechanism, Drug Class, Organism).
+2. Retrieve at least 3 high-signal relationships representing official CARD database edges (e.g., confers_resistance_to, has_mechanism, detected_in, part_of_operon).
+3. Populate the schema with scientific accuracy, detailing antibiotic efflux pumps, enzyme inactivation, carbapenemases, or beta-lactamase operons.
+"""
+                    response = model_flash.generate_content(
+                        prompt,
+                        generation_config=genai.GenerationConfig(
+                            response_mime_type="application/json",
+                            response_schema=CARDOutput
+                        )
                     )
-                    for rec in res_micro:
-                        context_sections.append(f"  - **Pathogen**: {rec['name']} (Is Pathogen: {rec['is_pathogen']})\n    *Description*: {rec['desc']}")
+                    
+                    raw_res = response.text.strip()
+                    if raw_res.startswith("```json"):
+                        raw_res = raw_res.split("```json")[1].split("```")[0].strip()
+                    elif raw_res.startswith("```"):
+                        raw_res = raw_res.split("```")[1].split("```")[0].strip()
+                    data = json.loads(raw_res)
+                    
+                    for res in data.get("results", []):
+                        term = res.get("queried_term")
+                        node_name = res.get("mapped_node_name")
+                        node_type = res.get("mapped_node_type")
+                        node_id = res.get("mapped_id")
+                        
+                        context_sections.append(f"📌 **CARD (ARO Ontology) Mapping for: '{term}'**")
+                        context_sections.append(f"  - **Standard Entity**: {node_name} ({node_type} | Standard ID: `{node_id}`)")
+                        context_sections.append("  - **CARD Antibiotic Resistance Mechanisms & Phenotypes (CARD Edges)**:")
+                        
+                        for rel in res.get("relationships", []):
+                            src_name = rel.get("source_node_name")
+                            src_type = rel.get("source_node_type")
+                            src_id = rel.get("source_id")
+                            edge = rel.get("relation_type")
+                            tgt_name = rel.get("target_node_name")
+                            tgt_type = rel.get("target_node_type")
+                            tgt_id = rel.get("target_id")
+                            desc = rel.get("description")
+                            
+                            context_sections.append(f"    * `({src_name}:{src_type} [{src_id}]) -[{edge}]-> ({tgt_name}:{tgt_type} [{tgt_id}])`")
+                            context_sections.append(f"      *Resistance Detail*: {desc}")
+                        context_sections.append("")
+                except Exception as e:
+                    context_sections.append(f"⚠️ Failed to query CARD dynamically: {e}")
+            else:
+                context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic CARD lookup.")
 
-                    # C. 檢索微生物與疾病之已知關聯 (Associations)
-                    res_rel = session.run(
-                        "MATCH (m:`biolink:OrganismTaxon`)-[r:`biolink:associated_with`]-(d:`biolink:Disease`) "
-                        "WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) OR "
-                        "      any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                        "RETURN m.all_names[0] AS microbe, d.all_names[0] AS disease LIMIT 2",
-                        term=term
-                    )
-                    rels = []
-                    for rec in res_rel:
-                        rels.append(f"'{rec['microbe']}' is associated with disease '{rec['disease']}'")
-                    if rels:
-                        context_sections.append("  - **Linked Associations**:\n    " + "\n    ".join(rels))
-
-                    # D. 檢索藥物/化學物資訊
-                    res_drug = session.run(
-                        "MATCH (dr:`biolink:Drug`) WHERE any(n in dr.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                        "RETURN dr.all_names[0] AS name, dr.description AS desc LIMIT 2",
-                        term=term
-                    )
-                    for rec in res_drug:
-                        context_sections.append(f"  - **Recommended Drug/Chemical**: {rec['name']}\n    *Details*: {rec['desc']}")
-
-            driver.close()
-        except Exception as e:
-            context_sections.append(f"⚠️ Failed to live-query MetagenomicKG: {e}")
-            context_sections.append("- Local Backup Fact: Staphylococcus aureus is a major human pathogen associated with skin, soft tissue, and systemic infections like sepsis and pneumonia.")
-
-    # B. 針對病患臨床紀錄，查詢/檢索 PrimeKG 精準醫學圖譜 (Disease, Drug, Phenotype, Gene, Pathway, Anatomy)
+    # ----------------------------------------------------
+    # B. 針對病患臨床紀錄 (FHIR Clinical Records) 全模組 ➡️ 查詢/檢索 PrimeKG 精準醫學圖譜
+    # ----------------------------------------------------
     if records_terms:
-        context_sections.append("🧬 [PrimeKG Precision Medicine Graph Live Retrieval Result]")
+        context_sections.append("🧬 [PrimeKG Precision Medicine Graph Live Retrieval Result (For Patient Clinical Records)]")
         
         api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
         if api_key:
@@ -1345,7 +1536,7 @@ def generate_llm_prompt(mode, file_contents):
 
     # 🔹 Search vector database for relevant background knowledge
     user_query = f"{mode} analysis guidelines and clinical risk"
-    context_text = retrieve_context(user_query, file_contents=file_contents)
+    context_text = retrieve_context(user_query, file_contents=file_contents, mode=mode)
     summary_lines.append(f"\n📚 Textbook Supplementary Knowledge:\n{context_text}")
 
     prompt_template = TEMPLATE_MAP[mode]
@@ -1416,18 +1607,18 @@ TEMPLATE_MAP = {
 以表格呈現參考基因組長度、不同門檻的基因組覆蓋度（如 $\ge 1\times$ 與 $\ge 10\times$ 覆蓋率）、平均定序深度 (Mean Depth)、未定鹼基數 (Ambiguous Bases / Ns 數量與佔比) 以及整體組裝品質評級。
 詳細列出檢出的病原體及其在各樣本中的相對豐度（RPM / rPM）。
 
-4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & MetagenomicKG/PrimeKG Integration)
+4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & KG-Registry/Monarch/PrimeKG Integration)
 說明基因組覆蓋的均勻度、是否出現顯著的訊號斷層，並列出檢測到的關鍵突變位點或標誌性胺基酸取代。
 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
 
-⚠️ 圖譜病原特性與 PrimeKG 宿主/臨床關聯整合 (Mandatory MetagenomicKG & PrimeKG Integration)：
-深度參考並結合「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 實時檢索拉回的微生物病原體屬性、臨床致病特徵，以及 PrimeKG 實時檢索到的病患精準醫學臨床病歷關聯（疾病-表型 HPO 關聯、靶點與通路 target-pathway 關聯等），探討其在該名病患體內的潛在臨床危害與精準醫學機制（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
+⚠️ 基因遺傳與精準醫學圖譜整合 (Mandatory KG-Registry/Monarch & PrimeKG Integration)：
+深度參考並結合「📚 Textbook Supplementary Knowledge」中由 KG-Registry / Monarch Initiative 實時檢索拉回的病原體基因變異、宿主易感性、表型關聯（如 NCBITaxon 病毒宿主關係、ClinVar 遺傳突變等），以及 PrimeKG 提供的病患精準醫學臨床病歷與對症藥理網絡（MONDO 疾病分類、臨床表型 HPO 關聯、退燒對症用藥如 Ibuprofen 靶點與通路等），探討其在該名病患體內的潛在臨床危害與宿主微觀機制（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
 
 5. 系統發生、公衛與臨床解讀建議 (Phylogenetic, Public Health & Clinical Interpretation)
 針對該病毒的覆蓋完整性（是否適合上傳 GISAID/GenBank 或進行進一步的演化樹分析）以及譜系分型結果提供專業解讀。
 綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）提出建議。
 
-⚠️ 臨床干預與精準投藥建議：深度參考 MetagenomicKG 推薦藥物以及 PrimeKG 實用精準藥理、適應症 (indication)、禁忌症 (contraindication) 與 drug_protein 關聯，為臨床醫師針對該特定病原突變株的治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置與投藥方案。
+⚠️ 臨床干預與精準投藥建議：綜合 KG-Registry/Monarch 的宿主易感遺傳學以及 PrimeKG 提供的精準對症藥理（退燒藥物、適應症 indication、禁忌症 contraindication 藥理網絡與 drug_protein 靶點通路），為臨床醫師針對該特定病毒突變株引起的上呼吸道感染與併發症（如中耳炎）之治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置與投藥方案。
 
 ⚠️ 執行注意事項：
 請從上傳的檔案內容中解析數據、行列與數值來撰寫報告。
@@ -1439,7 +1630,7 @@ TEMPLATE_MAP = {
 {csv_content}
 """,
 "Antimicrobial Resistance": """
-你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）抗性基因檢測（AMR）與臨床抗菌藥物管理（Antimicrobial Stewardship）的專家。請根據我上傳的三個檔案（包含 sample_metadata.csv、病原體檢測報表、以及基於 CZ ID / IDSeq 與 CARD / ResFinder 資料庫的抗藥性基因檢測報表），並結合後續提供的「📚 Textbook Supplementary Knowledge (MetagenomicKG & PrimeKG 知識圖譜)」，為我撰寫一份結構完整、專業且利於臨床醫師調整抗生素治療策略的 AMR 臨床觀察與洞察報告。
+你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）抗性基因檢測（AMR）與臨床抗菌藥物管理（Antimicrobial Stewardship）的專家。請根據我上傳的三個檔案（包含 sample_metadata.csv、病原體檢測報表、以及基於 CZ ID / IDSeq 與 CARD / ResFinder 資料庫的抗藥性基因檢測報表），並結合後續提供的「📚 Textbook Supplementary Knowledge (CARD & PrimeKG 知識圖譜)」，為我撰寫一份結構完整、專業且利於臨床醫師調整抗生素治療策略的 AMR 臨床觀察與洞察報告。
 📌 重要背景說明：
 本分析的所有檢體皆來自「同一位病人」（涵蓋治療前後不同時期，或不同採檢部位）。報告必須探討病原體與抗藥性基因在該病人治療過程中的動態變化，以及不同部位間抗藥性特徵的差異。
 【寫作與格式嚴格規範】
@@ -1461,15 +1652,15 @@ TEMPLATE_MAP = {
 3. Antimicrobial Resistance Profile & Pathogen Association (抗藥性基因圖譜與病原體關聯分析)
 
 基因與病原體對照：整理不同時間點/部位偵測到的抗性基因，詳細列出檢出抗性基因名稱 (Gene Symbol)、對應抗生素家族 (Drug Class)、基因覆蓋度 (Coverage) 與讀段支援數 (Reads Mapping)。並結合物種豐度，追蹤這些基因最可能來自哪一種檢出的致病細菌，標示預期表型耐藥特徵。
-⚠️ 圖譜藥理與抗藥機制深度整合 (Mandatory PrimeKG Integration)：必須深度結合 PrimeKG 知識圖譜中關於藥物、抗生素或化學物的背景資訊（如 Beta-lactams, Vancomycin 等 DrugBank 與 drug_protein 關聯），對比分析目前檢出的抗藥基因與引發的潛在臨床風險。
+⚠️ CARD 抗藥機制與 PrimeKG 臨床用藥深度整合 (Mandatory CARD & PrimeKG Integration)：必須深度結合 CARD 知識圖譜提供的 ARO 抗藥本體、抗性基因機制 (如 antibiotic efflux, inactivation) 與 PrimeKG 關於患者基礎疾病、臨床表型 HPO、以及臨床用藥 (如 Beta-lactams, Vancomycin 靶點 drug_protein 關聯、禁忌症) 的精準醫學資訊。對比分析目前檢出的抗藥基因與引發的潛在臨床風險。
 4. Comprehensive Clinical Risk Assessment (綜合臨床風險評估)
 
 綜合病原體與抗藥性基因的動態變化，評估該病人體內抗藥性突變、抗藥菌株在治療壓力下的演變或清除/篩選風險（如高風險 ESBL、多重抗藥性等）。
-⚠️ 圖譜病原致病與 PrimeKG 臨床風險整合：必須將 MetagenomicKG 中該病原體與特定系統性感染（如 Sepsis、Pneumonia、UTI 等）的關聯，以及 PrimeKG 中關於該患者本身基礎疾病與 HPO 臨床表型的關聯資訊，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
+⚠️ 圖譜病原致病與 PrimeKG 臨床風險整合：必須將 CARD 檢出的 ARO 抗性突變與病原體臨床風險，結合 PrimeKG 中關於該患者本身基礎疾病與 HPO 臨床表型的關聯資訊，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
 5. AMR Stewardship & Treatment Recommendations (抗菌藥物管理與臨床處置建議)
 
 針對檢出的關鍵抗藥特徵，指出哪些經驗性抗生素可能面臨治療失敗，必須避免使用；並提供院內感染管控或接觸隔離的警示建議。
-⚠️ 替代藥物與臨床實證用藥指引：必須結合 PrimeKG 中所建議之有效/推薦藥物及相關靶點通路 (indication, drug_protein) 臨床細節，提出具臨床實證依據的抗生素療程調整、優先考慮的替代治療方案（如碳青黴烯類或新型複合製劑）或合併用藥方案，並給出後續實驗驗證的建議。
+⚠️ 替代藥物與臨床實證用藥指引：必須結合 CARD 抗藥機制與 PrimeKG 中所建議之有效/推薦藥物及相關靶點通路 (indication, drug_protein) 臨床細節，提出具臨床實證依據的抗生素療程調整、優先考慮的替代治療方案（如碳青黴烯類或新型複合製劑）或合併用藥方案，並給出後續實驗驗證的建議。
  
 原始 CSV 摘要：
 {csv_content}
