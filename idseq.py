@@ -648,7 +648,7 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
     
 def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     """
-    結合 Gemini 智慧關鍵字/實體萃取、ITRI SmartCoder 與 UMLS API，
+    結合 Gemini 智慧關鍵字/實體萃取與 UMLS API (NLM)，
     從非結構化分析報告中精確提取臨床關鍵字與實體，轉換為標準 R4 FHIR Bundle。
     """
     import google.generativeai as genai
@@ -750,53 +750,9 @@ Report Text:
                 "system": system_uri_map.get(sys_code, "http://snomed.info/sct")
             })
 
-    # 4. 結合 ITRI 智慧編碼機制
-    itri_codings = []
-    polished_note = report_markdown
-
-    try:
-        api_url = "https://smartcoderm.itri-nlp.tw/sandbox/api/v1/snomed/coding"
-        api_key_itri = "bc95a81cc4976eb654a35e7c30f670f21a1d6fdadea3d856ff3d1e7aafc8b656"
-        req_id = str(uuid4())
-        
-        headers = {
-            "X-API-Key": api_key_itri,
-            "Origin": "https://colab.research.google.com",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "request_id": req_id,
-            "raw_clinical_note": report_markdown,
-            "output_format": "simple",
-        }
-        
-        response_api = requests.post(api_url, headers=headers, json=payload, timeout=(10, 240), allow_redirects=False)
-        response_api.raise_for_status()
-        
-        for attempt in range(15):
-            lookup_url = f"https://smartcoderm.itri-nlp.tw/sandbox/api/v1/snomed/results/{req_id}"
-            lookup_resp = requests.get(lookup_url, headers=headers, timeout=(10, 60), allow_redirects=False)
-            if lookup_resp.status_code == 200:
-                lookup_data = lookup_resp.json()
-                if lookup_data.get("status") == "completed":
-                    response_body = lookup_data.get("response", {})
-                    if "snomed_codings" in response_body:
-                        itri_codings = response_body["snomed_codings"]
-                    if "polished_clinical_note" in response_body:
-                        polished_note = response_body["polished_clinical_note"]
-                    break
-                elif lookup_data.get("status") == "failed":
-                    break
-            time.sleep(3)
-    except Exception:
-        pass
-
-    combined_context_str = "Pre-verified standard codings from UMLS API & ITRI SmartCoder:\n"
+    combined_context_str = "Pre-verified standard codings from UMLS API (NLM):\n"
     for item in umls_resolved_codings:
         combined_context_str += f"- Term: '{item['term']}' | Code: '{item['code']}' | Name: '{item['name']}' | System: {item['system']}\n"
-    for item in itri_codings:
-        combined_context_str += f"- SNOMED Code: '{item.get('concept_id')}' | Description: '{item.get('code_name')}' | System: 'http://snomed.info/sct'\n"
 
     # 初始化 Gemini Clinical NLP 實體提取引擎
     nlp_model = genai.GenerativeModel("gemini-2.5-pro")
@@ -807,7 +763,7 @@ Analyze the extracted clinical keywords and unstructured report, and map them to
 
 Unstructured Report:
 \"\"\"
-{polished_note}
+{report_markdown}
 \"\"\"
 
 Patient ID: {patient_id}
