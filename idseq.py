@@ -2351,7 +2351,7 @@ def main():
 
             # 顯示 MetagenomicKG & PrimeKG 實時檢索脈絡
             if st.session_state.get("kg_context_retrieved"):
-                with st.expander("🌐 混合知識圖譜 (MetagenomicKG & PrimeKG) 實時檢索證據 (Live Graph Evidence)", expanded=True):
+                with st.expander("🌐 混合知識圖譜 (PrimeKG & MetagenomicKG & BV-BRC & CARD) 實時檢索證據 (Live Graph Evidence)", expanded=True):
                     st.markdown(st.session_state.kg_context_retrieved)
 
             import textwrap
