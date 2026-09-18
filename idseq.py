@@ -1402,7 +1402,7 @@ TEMPLATE_MAP = {
 
 原始 CSV 摘要：
 {csv_content}
-"""
+""",
 "Antimicrobial Resistance": """
 你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）抗性基因檢測（AMR）與臨床抗菌藥物管理（Antimicrobial Stewardship）的專家。請根據我上傳的三個檔案（包含 sample_metadata.csv、病原體檢測報表、以及基於 CZ ID / IDSeq 與 CARD / ResFinder 資料庫的抗藥性基因檢測報表），並結合後續提供的「📚 Textbook Supplementary Knowledge (MetagenomicKG 知識圖譜)」，為我撰寫一份結構完整、專業且利於臨床醫師調整抗生素治療策略的 AMR 臨床觀察與洞察報告。
 📌 重要背景說明：
