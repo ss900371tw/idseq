@@ -1158,7 +1158,7 @@ Text:
         f"🔑 **多元知識圖譜關鍵字開放式動態萃取摘要 (Keywords Extraction Strategy: {extraction_method}):**\n"
         f"- 📄 **上傳檔案關鍵字 (Uploaded Files) (最多10個):** {', '.join(file_terms) if file_terms else '無匹配'}\n"
         f"  * 路由目標圖譜: "
-        f"{'MetagenomicKG (Neo4j Live)' if mode == 'Metagenomics' else 'KG-Registry / Monarch Initiative (Genomics & Phenotypes)' if mode == 'Consensus Genome' else 'CARD (Comprehensive Antibiotic Resistance Database)'}\n"
+        f"{'MetagenomicKG (Neo4j Live)' if mode == 'Metagenomics' else 'BV-BRC (Bacterial and Viral Bioinformatics Resource Center)' if mode == 'Consensus Genome' else 'CARD (Comprehensive Antibiotic Resistance Database)'}\n"
         f"- 📋 **臨床病歷關鍵字 (FHIR Clinical Records) (最多10個):** {', '.join(records_terms) if records_terms else '無匹配'}\n"
         f"  * 路由目標圖譜: PrimeKG (Precision Medicine Graph)\n"
     )
@@ -1228,8 +1228,8 @@ Text:
                 context_sections.append("- Local Backup Fact: Staphylococcus aureus is a major human pathogen associated with skin, soft tissue, and systemic infections like sepsis and pneumonia.")
 
         elif mode == "Consensus Genome":
-            # 🧬 軌道 2：Consensus Genome 模組上傳檔案 ➡️ 查詢 KG-Registry (Monarch Initiative / Knowledge Graph Hub)
-            context_sections.append("🧬 [KG-Registry / Monarch Initiative Graph Hub Live Retrieval Result (For Consensus Genome Pathogens & Genetics)]")
+            # 🧬 軌道 2：Consensus Genome 模組上傳檔案 ➡️ 查詢 BV-BRC (Bacterial and Viral Bioinformatics Resource Center) 知識圖譜
+            context_sections.append("🧬 [BV-BRC (Bacterial and Viral Bioinformatics Resource Center) Live Ontology Lookup (For Viral & Bacterial Genomes)]")
             
             api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
             if api_key:
@@ -1242,43 +1242,43 @@ Text:
                     genai.configure(api_key=api_key)
                     model_flash = genai.GenerativeModel("gemini-2.5-flash")
                     
-                    class MonarchRelationship(BaseModel):
-                        source_node_name: str = Field(description="Name of the source node (Gene, Variant, Phenotype, Disease, Taxon)")
-                        source_node_type: str = Field(description="Gene, Genotype, Variant, Phenotype, Disease, Taxon")
-                        source_id: str = Field(description="Ontology ID (e.g. HGNC:1101, ClinVar:9504, HP:0002090, MONDO:0005015, NCBITaxon:9606)")
-                        relation_type: str = Field(description="Edge type: gene_associated_with_disease, variant_causes_phenotype, gene_has_ortholog, organism_models_disease, phenotype_associated_with_disease")
+                    class BVBRCRelationship(BaseModel):
+                        source_node_name: str = Field(description="Name of the source node (Strain/Isolate, Feature/Gene, Protein, Virulence Factor, Host Interaction)")
+                        source_node_type: str = Field(description="Strain/Isolate, Feature/Gene, Protein, Virulence Factor, Host Interaction")
+                        source_id: str = Field(description="BV-BRC ID or standard ID (e.g. NCBI:1024, BVBRC:Gene_Spike, PDB:7DK3)")
+                        relation_type: str = Field(description="Edge type: has_lineage, expresses_protein, associated_with_virulence, interacts_with_host_receptor, resistant_to_drug")
                         target_node_name: str = Field(description="Name of the target node")
                         target_node_type: str = Field(description="Type of the target node")
-                        target_id: str = Field(description="Standardized ontology ID of the target node")
-                        description: str = Field(description="Biological and cross-species genetic-phenotypic significance of this relationship")
+                        target_id: str = Field(description="Standardized ID of the target node")
+                        description: str = Field(description="Genomic, structural, lineage, and host interaction details of this viral/bacterial relation")
 
-                    class MonarchQueryResult(BaseModel):
-                        queried_term: str = Field(description="The genomic/viral keyword queried")
-                        mapped_node_name: str = Field(description="Canonical standard name mapped in KG-Registry/Monarch")
-                        mapped_node_type: str = Field(description="Gene, Variant, Phenotype, Disease, or Taxon")
-                        mapped_id: str = Field(description="Standardized ID (NCBITaxon, HGNC, ClinVar, MONDO, etc.)")
-                        relationships: List[MonarchRelationship] = Field(description="List of standardized Monarch Initiative cross-species graph relationships")
+                    class BVBRCQueryResult(BaseModel):
+                        queried_term: str = Field(description="The viral/bacterial strain or genomic keyword queried")
+                        mapped_node_name: str = Field(description="Canonical standard strain/gene name mapped in BV-BRC")
+                        mapped_node_type: str = Field(description="Strain/Isolate, Feature/Gene, Protein, or Virulence Factor")
+                        mapped_id: str = Field(description="Standard BV-BRC / NCBI taxon ID")
+                        relationships: List[BVBRCRelationship] = Field(description="List of standardized BV-BRC structural and functional genome relationships")
 
-                    class MonarchOutput(BaseModel):
-                        results: List[MonarchQueryResult] = Field(description="Monarch Initiative KG-Registry clinical and genetic mapping results")
+                    class BVBRCOutput(BaseModel):
+                        results: List[BVBRCQueryResult] = Field(description="BV-BRC genome mapping and strain lineage results")
 
                     prompt = f"""
-You are an expert medical geneticist representing the Monarch Initiative KG-Registry and Knowledge Graph Hub database.
-Analyze the following genomic and viral terms from the consensus genome analysis, map them to Monarch standard nodes, and retrieve their cross-species genetics and phenotypic relationships.
+You are an expert bioinformatician representing the BV-BRC (Bacterial and Viral Bioinformatics Resource Center) genomics database.
+Analyze the following viral/bacterial terms, map them to BV-BRC standard strains/features, and retrieve their genomic, lineage, and host-pathogen relationships.
 
 Keywords to query:
 {file_terms}
 
 Instructions:
-1. Map each keyword to its canonical Monarch node type (Gene, Variant, Phenotype, Disease, Taxon) and standard ontology IDs (e.g., NCBITaxon for viruses/pathogens, HGNC for human genes, ClinVar for variants, MONDO for diseases, HPO for phenotypes).
-2. Retrieve at least 3 high-signal relationships representing official Monarch edges (e.g., gene_associated_with_disease, variant_causes_phenotype, gene_has_ortholog, organism_models_disease, phenotype_associated_with_disease).
-3. Populate the schema with scientific accuracy, detailing viral genomic pathogenesis and host susceptibility genes.
+1. Map each keyword to its canonical BV-BRC node type (Strain/Isolate, Feature/Gene, Protein, Virulence Factor) and standard IDs (NCBITaxon ID for strains, BV-BRC Feature ID for viral/bacterial genes).
+2. Retrieve at least 3 high-signal relationships representing official BV-BRC schema edges (e.g., has_lineage, expresses_protein, associated_with_virulence, interacts_with_host_receptor, resistant_to_drug).
+3. Populate the schema with scientific accuracy, detailing Pangolin lineages, viral clades, spike/envelope protein structural interactions, and viral virulence mechanisms.
 """
                     response = model_flash.generate_content(
                         prompt,
                         generation_config=genai.GenerationConfig(
                             response_mime_type="application/json",
-                            response_schema=MonarchOutput
+                            response_schema=BVBRCOutput
                         )
                     )
                     
@@ -1295,9 +1295,9 @@ Instructions:
                         node_type = res.get("mapped_node_type")
                         node_id = res.get("mapped_id")
                         
-                        context_sections.append(f"📌 **KG-Registry / Monarch Initiative Ontological Mapping for: '{term}'**")
+                        context_sections.append(f"📌 **BV-BRC Genome Database Ontological Mapping for: '{term}'**")
                         context_sections.append(f"  - **Standard Entity**: {node_name} ({node_type} | Standard ID: `{node_id}`)")
-                        context_sections.append("  - **Cross-Species Genetics & Phenotypic Relationships (Monarch Edges)**:")
+                        context_sections.append("  - **Genomic Features, Lineages & Host-Pathogen Interactions (BV-BRC Edges)**:")
                         
                         for rel in res.get("relationships", []):
                             src_name = rel.get("source_node_name")
@@ -1313,9 +1313,9 @@ Instructions:
                             context_sections.append(f"      *Biological Significance*: {desc}")
                         context_sections.append("")
                 except Exception as e:
-                    context_sections.append(f"⚠️ Failed to query Monarch Initiative KG-Registry dynamically: {e}")
+                    context_sections.append(f"⚠️ Failed to query BV-BRC dynamically: {e}")
             else:
-                context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic KG-Registry/Monarch lookup.")
+                context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic BV-BRC lookup.")
 
         elif mode == "Antimicrobial Resistance":
             # 💊 軌道 3：Antimicrobial Resistance 模組上傳檔案 ➡️ 查詢 CARD (Comprehensive Antibiotic Resistance Database)
@@ -1607,18 +1607,18 @@ TEMPLATE_MAP = {
 以表格呈現參考基因組長度、不同門檻的基因組覆蓋度（如 $\ge 1\times$ 與 $\ge 10\times$ 覆蓋率）、平均定序深度 (Mean Depth)、未定鹼基數 (Ambiguous Bases / Ns 數量與佔比) 以及整體組裝品質評級。
 詳細列出檢出的病原體及其在各樣本中的相對豐度（RPM / rPM）。
 
-4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & KG-Registry/Monarch/PrimeKG Integration)
+4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & BV-BRC/PrimeKG Integration)
 說明基因組覆蓋的均勻度、是否出現顯著的訊號斷層，並列出檢測到的關鍵突變位點或標誌性胺基酸取代。
 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
 
-⚠️ 基因遺傳與精準醫學圖譜整合 (Mandatory KG-Registry/Monarch & PrimeKG Integration)：
-深度參考並結合「📚 Textbook Supplementary Knowledge」中由 KG-Registry / Monarch Initiative 實時檢索拉回的病原體基因變異、宿主易感性、表型關聯（如 NCBITaxon 病毒宿主關係、ClinVar 遺傳突變等），以及 PrimeKG 提供的病患精準醫學臨床病歷與對症藥理網絡（MONDO 疾病分類、臨床表型 HPO 關聯、退燒對症用藥如 Ibuprofen 靶點與通路等），探討其在該名病患體內的潛在臨床危害與宿主微觀機制（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
+⚠️ 微生物基因組與精準醫學圖譜整合 (Mandatory BV-BRC & PrimeKG Integration)：
+深度參考並結合「📚 Textbook Supplementary Knowledge」中由 BV-BRC (Bacterial and Viral Bioinformatics Resource Center) 實時檢索拉回的微生物基因組特徵、Pangolin 演化譜系、蛋白結構、毒力因子及宿主交互網絡，以及 PrimeKG 提供的病患精準醫學臨床病歷與對症藥理網絡（MONDO 疾病分類、臨床表型 HPO 關聯、退燒對症用藥如 Ibuprofen 靶點與通路等），探討其在該名病患體內的潛在臨床危害與宿主微觀機制（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
 
 5. 系統發生、公衛與臨床解讀建議 (Phylogenetic, Public Health & Clinical Interpretation)
 針對該病毒的覆蓋完整性（是否適合上傳 GISAID/GenBank 或進行進一步的演化樹分析）以及譜系分型結果提供專業解讀。
 綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）提出建議。
 
-⚠️ 臨床干預與精準投藥建議：綜合 KG-Registry/Monarch 的宿主易感遺傳學以及 PrimeKG 提供的精準對症藥理（退燒藥物、適應症 indication、禁忌症 contraindication 藥理網絡與 drug_protein 靶點通路），為臨床醫師針對該特定病毒突變株引起的上呼吸道感染與併發症（如中耳炎）之治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置與投藥方案。
+⚠️ 臨床干預與精準投藥建議：綜合 BV-BRC 提供的病毒結構與譜系抗性特徵以及 PrimeKG 提供的精準對症藥理（退燒藥物、適應症 indication、禁忌症 contraindication 藥理網絡與 drug_protein 靶點通路），為臨床醫師針對該特定病毒突變株引起的上呼吸道感染與併發症（如中耳炎）之治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置與投藥方案。
 
 ⚠️ 執行注意事項：
 請從上傳的檔案內容中解析數據、行列與數值來撰寫報告。
@@ -2351,7 +2351,7 @@ def main():
 
             # 顯示 MetagenomicKG & PrimeKG 實時檢索脈絡
             if st.session_state.get("kg_context_retrieved"):
-                with st.expander("🌐 混合知識圖譜實時檢索證據 (Live Graph Evidence)", expanded=True):
+                with st.expander("🌐 混合知識圖譜 (MetagenomicKG & PrimeKG) 實時檢索證據 (Live Graph Evidence)", expanded=True):
                     st.markdown(st.session_state.kg_context_retrieved)
 
             import textwrap
