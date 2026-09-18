@@ -1322,30 +1322,32 @@ def generate_llm_prompt(mode, file_contents):
 # Prompt 模板
 TEMPLATE_MAP = {
     "Metagenomics": """
-請根據我上傳的 Metagenomics 分析相關檔案（包含 heatmap.csv 及其他數據），撰寫一份結構完整、專業的 Metagenomics 分析報告。
+你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）數據解讀與臨床感染症的專家。請根據我後續提供的 IDSeq (CZ ID) 宏基因組分析原始數據（包含 heatmap.csv 及相關數據）與圖譜補充知識，產出一份結構完整、專業且利於臨床個案追蹤與研究判讀的綜合性 mNGS 個案分析報告。
 
-📌 重要背景說明：本分析的所有樣本皆來自「同一個病人」（可能為同時期/不同時期，或同部位/不同部位的檢體）。報告必須以單一個案追蹤（Case Study / Longitudinal & Multi-site tracking）的角度出發，探討病程進展、治療前後變化或不同部位間的微生物相差異，切勿將其視為不同病人的群體橫斷性研究。
+📌 重要背景說明：本分析的所有樣本皆來自「同一個病人」（包含不同採檢時間點或不同解剖部位的檢體）。報告必須以單一個案追蹤（Case Study / Longitudinal & Multi-site tracking）的角度出發，探討病程進展、治療前後變化或不同部位間的微生物相差異，切勿將其視為不同病人的群體橫斷性研究。
 
-請依照以下結構進行分析與撰寫：
+整份報告必須嚴謹包含以下五大核心區塊與擴充架構：
 
-1. 執行摘要 (Executive Summary)
-   - 總結本次個案分析的核心發現、樣本概況（採檢時間點與部位）與主要生物學結論。
+1. 樣本與品管摘要 (Sample & QC Summary)
+   - 包含 Sample ID、宿主來源、總 Raw Reads、扣除宿主後的 Passing Filters (Non-host Reads) 及佔比、品管狀態與各採檢時間點/部位概況。
 
-2. 物種組成與豐度分析 (Taxonomic Composition & Abundance)
-   - 解析上傳數據中的核心物種組成（如門、科、屬、種等層級）。
-   - 點出各樣本中豐度最高、最具代表性的優勢菌群（Top Taxa），並比較其在不同時間或部位的變化趨勢。
+2. 病原體分類與指標列表 (Taxonomic Abundance & Significance Table)
+   - 以表格呈現檢出的病原分類（Viruses, Bacteria, Eukaryotes 等）、科學名稱、rPM (Reads Per Million)、Z-score（背景顯著性）、NT 吻合數 (Reads) 及基因組覆蓋度 (Coverage)。
 
-3. 樣本分群與熱圖解讀 (Heatmap & Clustering Analysis)
-   - 針對 heatmap.csv 的數據結構，解讀該病人在不同時間點或部位之間的聚類關係、相似性與動態差異性。
-   - 指出不同採檢時間點或部位之間顯著的微生物分佈轉變或優勢菌株位移。
+3. 核心指標專業解讀與熱圖分析 (Key Metrics & Heatmap Clustering Analysis)
+   - 針對檢出數值較高的標的分析其 rPM 相對豐度意義，以及 Z-score 是否高於背景閾值（排除環境污染與 Kitome 雜訊）。
+   - 針對 heatmap.csv 的數據結構，解讀該病人在不同時間點或部位之間的聚類關係、相似性與動態差異性，指出顯著的微生物分佈轉變或優勢菌株位移。
 
-4. 生態與生物學意義推論 (Biological & Ecological Insights)
-   - 結合檢出的微生物組成，推論其在該病人體內的潛在臨床意義、病理特徵或對治療反應的影響。
-   - ⚠️ **知識圖譜強制深度整合 (Mandatory MetagenomicKG Graph Integration)**：你必須深度整合下方「📚 Textbook Supplementary Knowledge」部分提供的 MetagenomicKG 圖資料庫檢索脈絡（特別是 Pathogen、Disease、以及它們之間的 Linked Associations 臨床實證關聯，例如特定的病原體與慢性感染、腫瘤或併發症的已知醫學關聯）。請在分析中明確指出檢出微生物在圖譜中的病原體分類（如 Is Pathogen 是否為已知病原）、其在臨床上所涉疾病與致病機制，嚴禁直接忽略圖譜背景知識。
+4. 綜合風險、訊號雜訊與生態意義推論 (Signal-to-Noise & Biological Insights)
+   - 結合檢體類型與常見背景雜訊，辨識「真正潛在致病原」與「過客/背景微生物」，評估偽陽性或定植的可能。
+   - ⚠️ 知識圖譜強制深度整合 (Mandatory MetagenomicKG Graph Integration)：你必須深度整合下方「📚 Textbook Supplementary Knowledge」部分提供的 MetagenomicKG 圖資料庫檢索脈絡（特別是 Pathogen、Disease、以及它們之間的 Linked Associations 臨床實證關聯，例如特定的病原體與慢性感染、腫瘤或併發症的已知醫學關聯）。明確指出檢出微生物在圖譜中的病原體分類與致病機制，嚴禁直接忽略圖譜背景知識。
 
-5. 結論與後續建議 (Conclusion & Next Steps)
-   - 總結分析亮點，並提出針對該病人後續臨床追蹤或進一步分析的方向（例如：Alpha/Beta 多樣性變化、功能基因預測等）。
-   - ⚠️ **臨床治療與投藥指引**：必須結合圖譜檢索到的推薦藥物與臨床實證背景資訊（Recommended Drug/Chemical & Details），針對病患後續的經驗性治療或精準用藥調整，給予具備圖譜科學依據的臨床指引建議。
+5. 結論、臨床治療與後續驗證建議 (Conclusion, Treatment Guidelines & Next Steps)
+   - 總結分析亮點，並評估對病人病程與治療反應的影響。
+   - ⚠️ 臨床治療與投藥指引：必須結合圖譜檢索到的推薦藥物與臨床實證背景資訊（Recommended Drug/Chemical & Details），針對病患後續的經驗性治療或精準用藥調整，給予具備圖譜科學依據的臨床指引建議。
+   - 提供後續具體的實驗與臨床驗證建議（例如特定 PCR、傳統微生物培養、Sanger 定序或臨床進一步鑑別方向、Alpha/Beta 多樣性變化與功能基因預測等）。
+
+請確保用詞專業、客觀，嚴格符合 IDSeq / Metagenomics 數據分析標準規範。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
