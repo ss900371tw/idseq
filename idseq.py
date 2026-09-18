@@ -1361,41 +1361,40 @@ TEMPLATE_MAP = {
 {csv_content}
 """,
     "Consensus Genome": """
-請根據我所提供的三個 IDSEQ Consensus Genome 分析結果檔案，為我撰寫一份詳盡且專業的 Consensus Genome 分析報告。
+你是一位精通病毒基因體學（Viral Genomics）、次世代定序（mNGS）數據分析與臨床感染學的專家。
 
-📌 重要背景說明：本分析的所有檢體皆來自「同一個病人」（可能為同時期/不同時期，或同部位/不同部位）。報告必須聚焦於病原體在該病人體內的演化、持續感染或不同部位的分佈情形。
+請根據我所提供的 CZ ID (IDSeq) Consensus Genome (CG) 原始分析數據與臨床背景，為我撰寫一份結構完整、專業且利於臨床解讀與公衛監測的「一致性基因體（Consensus Genome）分析報告」。
+📌 重要背景說明：
+本分析的所有檢體皆來自「同一個病人」（可能為同時期/不同時期，或同部位/不同部位）。報告必須聚焦於病原體在該病人體內的演化、持續感染或不同部位的分佈情形。
+最終報告必須完全以英文撰寫（Professional English），結構嚴謹，並涵蓋以下五大核心區塊與深度維度：
 
-報告內容必須具體、深入，並涵蓋以下專業維度與結構：
-
-1. 執行摘要 (Executive Summary)
-   - 總結本次檢體高通量定序（mNGS）與 Consensus Genome (IDSEQ) 分析的核心發現。
-   - 點出主要檢出的病原體及其在不同時間點或部位的臨床意義。
+1. 執行摘要與樣本/目標病毒摘要 (Executive Summary & Target Summary)
+總結本次檢體高通量定序（mNGS）與 Consensus Genome (IDSEQ) 分析的核心發現。
+點出主要檢出的病原體及其在不同時間點或部位的臨床意義。包含 Sample ID、標的病毒名稱 (Target Organism)、分析管線版本、Pangolin 預測譜系 (Lineage)、總乾淨序列數 (Total Clean Reads) 及對應到該病毒的 Mapped Reads 數與佔比。
 
 2. 樣本與定序品質控制 (Sample & Sequencing Quality Control)
-   - 評估各樣本的總讀數（Total Reads）、過濾後讀數（Passing Filters）及比對率（Mapping Statistics）。
-   - 分析宿主背景基因序列（Host background）佔比及對病原體檢出靈敏度的影響。
+評估各樣本的總讀數（Total Reads）、過濾後讀數（Passing Filters）及比對率（Mapping Statistics）。分析宿主背景基因序列（Host background）佔比及對病原體檢出靈敏度的影響。
 
-3. 病原體鑒定與詳情 (Pathogen Identification & Profiling)
-   - 詳細列出檢出的病毒/細菌/真菌病原體及其在各樣本中的相對豐度（RPM / rPM / Reads per million）。
-   - 針對主要目標病原體，分析其基因體覆蓋率（Genome Coverage）與平均定序深度（Mean Depth）在不同檢體間的差異。
-   - 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
-   - ⚠️ **圖譜病原特性與宿主關聯整合 (Mandatory MetagenomicKG Graph Integration)**：針對檢出的主要病原體，你必須深度參考並結合「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 實時檢索拉回的微生物病原體屬性、臨床致病特徵，特別是該病原體在圖譜中與特定慢性感染、器官病變或腫瘤/併發症的 Linked Associations 關聯，探討其在該名病患體內的潛在臨床危害。
+3. 基因組覆蓋度與深度指標 (Coverage & Depth Metrics Table)
+以表格呈現參考基因組長度、不同門檻的基因組覆蓋度、平均定序深度 (Mean Depth)、未定鹼基數 (Ambiguous Bases / Ns 數量與佔比) 以及整體組裝品質評級。
+詳細列出檢出的病原體及其在各樣本中的相對豐度（RPM / rPM）。
 
-4. 系統發生與變異分析 (Phylogenetic & Variant Analysis - 追蹤病原體演化)
-   - 比較不同時間點或不同部位檢體中 Consensus Genome 的變異位點，探討病原體在病人體內的基因型（Genotype）、亞型（Subtype）演化，或抗藥性/毒力相關位點的突變漂移（Mutation drift）。
+4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & MetagenomicKG Integration)
+說明基因組覆蓋的均勻度、是否出現顯著的訊號斷層，並列出檢測到的關鍵突變位點或標誌性胺基酸取代。
+評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
 
-5. 總結與建議 (Conclusion & Recommendations)
-   - 綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）或臨床處置提出建議。
-   - ⚠️ **臨床干預與精準投藥建議**：請深度參考圖譜檢索出的「Recommended Drug/Chemical」藥物建議，為臨床醫師在針對該特定病原突變株的治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置方案。
+⚠️ 圖譜病原特性與宿主關聯整合 (Mandatory MetagenomicKG Graph Integration)：
+深度參考並結合「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 實時檢索拉回的微生物病原體屬性、臨床致病特徵，
+特別是該病原體在圖譜中與特定慢性感染、器官病變或腫瘤/併發症的 Linked Associations 關聯，探討其在該名病患體內的潛在臨床危害（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
 
-注意事項：
-- 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
-- **MetagenomicKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 Pathogen-Disease 關聯、推薦藥物等實時檢索資訊）有機融合融入對應的第 3 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
-- 報告語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。
-- 請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
+5. 系統發生、公衛與臨床解讀建議 (Phylogenetic, Public Health & Clinical Interpretation)
+針對該病毒的覆蓋完整性（是否適合上傳 GISAID/GenBank 或進行進一步的演化樹分析）以及譜系分型結果提供專業解讀。
+綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）提出建議。
 
-📌 請以這些問題作為一致性基因體分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
- 
+⚠️ 臨床干預與精準投藥建議：深度參考圖譜檢索出的「Recommended Drug/Chemical」藥物建議，為臨床醫師針對該特定病原突變株的治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置方案。
+⚠️ 執行注意事項：請從上傳的檔案內容中解析數據、行列與數值來撰寫報告。
+語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。嚴禁任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。禁止逐題問答式輸出，必須融合為一篇流暢的專業臨床洞察報告。
+
 原始 CSV 摘要：
 {csv_content}
 """,
