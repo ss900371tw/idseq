@@ -1361,76 +1361,37 @@ TEMPLATE_MAP = {
 {csv_content}
 """,
     "Consensus Genome": """
-你是一位精通病毒基因體學（Viral Genomics）、次世代定序（mNGS）數據分析與臨床感染學的專家。
-
-請根據我所提供的 CZ ID (IDSeq) Consensus Genome (CG) 原始分析數據與臨床背景，為我撰寫一份結構完整、專業且利於臨床解讀與公衛監測的「一致性基因體（Consensus Genome）分析報告」。
+你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）抗性基因檢測（AMR）與臨床抗菌藥物管理（Antimicrobial Stewardship）的專家。請根據我上傳的三個檔案（包含 sample_metadata.csv、病原體檢測報表、以及基於 CZ ID / IDSeq 與 CARD / ResFinder 資料庫的抗藥性基因檢測報表），並結合後續提供的「📚 Textbook Supplementary Knowledge (MetagenomicKG 知識圖譜)」，為我撰寫一份結構完整、專業且利於臨床醫師調整抗生素治療策略的 AMR 臨床觀察與洞察報告。
 📌 重要背景說明：
-本分析的所有檢體皆來自「同一個病人」（可能為同時期/不同時期，或同部位/不同部位）。報告必須聚焦於病原體在該病人體內的演化、持續感染或不同部位的分佈情形。
-最終報告必須完全以英文撰寫（Professional English），結構嚴謹，並涵蓋以下五大核心區塊與深度維度：
+本分析的所有檢體皆來自「同一位病人」（涵蓋治療前後不同時期，或不同採檢部位）。報告必須探討病原體與抗藥性基因在該病人治療過程中的動態變化，以及不同部位間抗藥性特徵的差異。
+【寫作與格式嚴格規範】
 
-1. 執行摘要與樣本/目標病毒摘要 (Executive Summary & Target Summary)
-總結本次檢體高通量定序（mNGS）與 Consensus Genome (IDSEQ) 分析的核心發現。
-點出主要檢出的病原體及其在不同時間點或部位的臨床意義。包含 Sample ID、標的病毒名稱 (Target Organism)、分析管線版本、Pangolin 預測譜系 (Lineage)、總乾淨序列數 (Total Clean Reads) 及對應到該病毒的 Mapped Reads 數與佔比。
+全英文輸出：最終報告必須完全以英文 (English) 撰寫，專有名詞請保持正確的生物資訊與微生物學術語。
+禁止無效內容：請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始必須直接是報告主體。
+行文風格：語氣需專業、客觀，嚴格符合臨床抗感染規範，並禁止逐題問答式的輸出，請以連貫的專業報告格式呈現。
+知識圖譜強制整合：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識有機融合進報告主體的敘事分析與臨床推論中，嚴禁僅將其作為附錄或簡單條列。
+【報告核心區塊與結構要求】
+請直接從上傳的檔案內容中萃取數據進行分析與整合，報告必須包含以下五個核心區段：
+1. Sample Metadata & AMR Pipeline Summary (樣本概況與測序品質摘要)
 
-2. 樣本與定序品質控制 (Sample & Sequencing Quality Control)
-評估各樣本的總讀數（Total Reads）、過濾後讀數（Passing Filters）及比對率（Mapping Statistics）。分析宿主背景基因序列（Host background）佔比及對病原體檢出靈敏度的影響。
+摘要 sample_metadata.csv 中的關鍵樣本資訊（包含 Sample ID、採檢時間點、採檢部位、用藥史等臨床特徵）。
+總結使用的 AMR 分析管線與資料庫版本、總乾淨序列數 (Total Clean Reads)、扣除宿主後的無宿主序列數 (Non-host Reads)，以及 AMR 整體檢測狀態。
+2. Pathogen Identification & Dynamics (主要病原體識別與動態變化)
 
-3. 基因組覆蓋度與深度指標 (Coverage & Depth Metrics Table)
-以表格呈現參考基因組長度、不同門檻的基因組覆蓋度、平均定序深度 (Mean Depth)、未定鹼基數 (Ambiguous Bases / Ns 數量與佔比) 以及整體組裝品質評級。
-詳細列出檢出的病原體及其在各樣本中的相對豐度（RPM / rPM）。
+根據病原體檢測結果，列出該病人在不同時間點或不同檢體部位中，主要檢出的致病微生物。
+分析其相對豐度（如 rPM）或檢出情形的動態變化趨勢。
+3. Antimicrobial Resistance Profile & Pathogen Association (抗藥性基因圖譜與病原體關聯分析)
 
-4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & MetagenomicKG Integration)
-說明基因組覆蓋的均勻度、是否出現顯著的訊號斷層，並列出檢測到的關鍵突變位點或標誌性胺基酸取代。
-評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
+基因與病原體對照：整理不同時間點/部位偵測到的抗性基因，詳細列出檢出抗性基因名稱 (Gene Symbol)、對應抗生素家族 (Drug Class)、基因覆蓋度 (Coverage) 與讀段支援數 (Reads Mapping)。並結合物種豐度，追蹤這些基因最可能來自哪一種檢出的致病細菌，標示預期表型耐藥特徵。
+⚠️ 圖譜藥理與抗藥機制深度整合 (Mandatory MetagenomicKG Integration)：必須深度結合知識圖譜中關於藥物、抗生素或化學物的背景資訊（如 Beta-lactams, Vancomycin 等），對比分析目前檢出的抗藥基因與其臨床用藥之間的交互關係、潛在毒性或藥物副作用。
+4. Comprehensive Clinical Risk Assessment (綜合臨床風險評估)
 
-⚠️ 圖譜病原特性與宿主關聯整合 (Mandatory MetagenomicKG Graph Integration)：
-深度參考並結合「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 實時檢索拉回的微生物病原體屬性、臨床致病特徵，
-特別是該病原體在圖譜中與特定慢性感染、器官病變或腫瘤/併發症的 Linked Associations 關聯，探討其在該名病患體內的潛在臨床危害（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
+綜合病原體與抗藥性基因的動態變化，評估該病人體內抗藥性突變、抗藥菌株在治療壓力下的演變或清除/篩選風險（如高風險 ESBL、多重抗藥性等）。
+⚠️ 圖譜病原致病風險整合：必須將知識圖譜中該病原體與特定系統性感染（如 Sepsis、Pneumonia、UTI 等）或腫瘤併發症的臨床實證關聯，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
+5. AMR Stewardship & Treatment Recommendations (抗菌藥物管理與臨床處置建議)
 
-5. 系統發生、公衛與臨床解讀建議 (Phylogenetic, Public Health & Clinical Interpretation)
-針對該病毒的覆蓋完整性（是否適合上傳 GISAID/GenBank 或進行進一步的演化樹分析）以及譜系分型結果提供專業解讀。
-綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）提出建議。
-
-⚠️ 臨床干預與精準投藥建議：深度參考圖譜檢索出的「Recommended Drug/Chemical」藥物建議，為臨床醫師針對該特定病原突變株的治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置方案。
-⚠️ 執行注意事項：請從上傳的檔案內容中解析數據、行列與數值來撰寫報告。
-語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。嚴禁任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。禁止逐題問答式輸出，必須融合為一篇流暢的專業臨床洞察報告。
-
-📌 請以上述問題作為抗藥性分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
-原始 CSV 摘要：
-{csv_content}
-""",
-    "Antimicrobial Resistance": """
-請依據我所上傳的三個檔案（包含 sample_metadata.csv 以及相關的抗藥性基因與病原體檢測報表），為我撰寫一份結構完整、專業的 IDSEQ 抗藥性分析報告。
-
-📌 重要背景說明：本分析的所有檢體皆來自「同一個病人」（可能為治療前後的不同時期，或不同採檢部位）。報告必須探討抗藥性基因在該病人治療過程中的動態變化，或不同部位間抗藥性特徵的差異。
-
-請直接從上傳的檔案內容中萃取數據進行分析與整合。
-
-報告請包含以下幾個核心區段：
-
-1. 樣本概況與中繼資料摘要 (Sample Metadata & Overview)：
-   - 摘要 sample_metadata.csv 中的關鍵樣本資訊（如採檢時間點、部位、用藥史等臨床特徵）。
-2. 主要病原體識別 (Pathogen Identification)：
-   - 根據檢測結果列出該病人在不同檢體中主要的病原微生物及其相對豐度或檢出情形的動態變化。
-3. 抗藥性基因 (ARGs) 與抗生素關聯分析 (Antimicrobial Resistance Profile)：
-   - 整理在不同時間點或部位偵測到的抗藥性基因，對應其所抵抗的抗生素類別（如 Beta-lactams、Aminoglycosides 等）、基因覆蓋率的變化。
-   - ⚠️ **圖譜藥理與抗藥機制深度整合 (Mandatory MetagenomicKG Graph Integration)**：你必須深度結合下方「📚 Textbook Supplementary Knowledge」中由 MetagenomicKG 所檢索出的藥物、抗生素或化學物背景資訊（例如 Beta-lactam 類、Vancomycin、Ciprofloxacin 等），對比分析目前檢出的抗藥基因與其臨床用藥之間的交互關係、潛在毒性或藥物副作用。
-
-4. 綜合風險評估與臨床意涵 (Clinical & Public Health Implications)：
-   - 綜合病原體與抗藥性基因結果，評估該病人體內抗藥性突變或抗藥菌株清除/篩選的潛在風險（例如：治療壓力下的抗藥性演變）。
-   - ⚠️ **圖譜病原致病風險整合**：必須將圖譜中該病原體與特定系統性感染（如 Sepsis 敗血症、Pneumonia 肺炎、UTI 尿路感染等）或腫瘤併發症的 Linked Associations 臨床實證關聯，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
-
-5. 後續建議 (Recommendations)：
-   - 針對該病人的檢測結果，提出後續實驗驗證或臨床抗生素調整的處置建議。
-   - ⚠️ **替代藥物與臨床實證用藥指引**：必須結合圖譜中所建議之有效/推薦藥物（Recommended Drug/Chemical）及細節，提出具臨床實證依據的抗生素療程調整或合併用藥方案。
-
-注意事項：
-- 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
-- **MetagenomicKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 Pathogen-Disease 關聯、推薦藥物等實時檢索資訊）有機融合融入對應的第 3 點、第 4 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
-- 報告語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。
-- 請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
-
-📌 請以上述問題作為抗藥性分析的指導方針，綜合撰寫一份臨床觀察與洞察報告。最終報告必須完全以英文撰寫並禁止逐題問答式輸出。
+針對檢出的關鍵抗藥特徵，指出哪些經驗性抗生素可能面臨治療失敗，必須避免使用；並提供院內感染管控或接觸隔離的警示建議。
+⚠️ 替代藥物與臨床實證用藥指引：必須結合圖譜中所建議之有效/推薦藥物 (Recommended Drug/Chemical) 及相關細節，提出具臨床實證依據的抗生素療程調整、優先考慮的替代治療方案（如碳青黴烯類或新型複合製劑）或合併用藥方案，並給出後續實驗驗證的建議。
  
 原始 CSV 摘要：
 {csv_content}
