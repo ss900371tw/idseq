@@ -691,12 +691,24 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     extractor_model = genai.GenerativeModel("gemini-2.5-pro")
     
     extraction_prompt = f"""
-You are an exhaustive clinical keyword and entity extraction engine.
-Analyze the following clinical metagenomic analysis report, extract AT LEAST 200 TO 300 medical entities, pathogens, conditions, lab tests, observations, symptoms, procedures, and medications as distinct keywords.
+You are an exhaustive and precise clinical keyword and entity extraction engine.
+Analyze the following clinical report and extract ALL valid medical entities, pathogens, conditions, lab metrics, observations, symptoms, procedures, and medications that are **actively associated with the patient in the current clinical context**.
+
+[CRITICAL EXTRACTION RULES]:
+1. **Factuality Constraint**: Extract ONLY entities, conditions, medications, and symptoms that are explicitly stated as present, diagnosed, measured, or currently prescribed for the patient in the text.
+2. **Exclude Hypotheticals & Warnings**: DO NOT extract hypothetical substances, potential drug-supplement interactions (e.g., Vitamin E mentioned only as a warning), unprescribed medications, or general educational remarks unless they are part of the patient's actual medical history, current chart, or active prescription list.
+3. **Do not hallucinate** or manufacture entities not directly supported by the report text.
+
+Categorize the extracted entities into the following structures:
+1. Conditions / Diagnoses (e.g., SARS-CoV-2 infection, Viral sinusitis, Hypertension)
+2. Pathogens & Microbes (e.g., Severe acute respiratory syndrome-related coronavirus, Bacteroides)
+3. Laboratory / mNGS Metrics (e.g., rPM, Z-score, Read counts, Coverage)
+4. Symptoms / Phenotypes (e.g., Sore throat, Nasal congestion)
+5. Active Medications / Treatments (e.g., Amoxicillin/Clavulanate, Hydrochlorothiazide — strictly those prescribed to the patient)
+6. Specimens & Technical Metadata (e.g., Nasopharyngeal swab, RNA-based metagenomic sequencing)
 
 Report Text:
-\"\"\"
-{report_markdown}
+\"\"\"{report_markdown}
 \"\"\"
 """
     
