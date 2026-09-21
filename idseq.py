@@ -691,23 +691,23 @@ def convert_text_to_fhir_structured_ai(patient_id, report_markdown, api_key):
     extractor_model = genai.GenerativeModel("gemini-2.5-pro")
     
     extraction_prompt = f"""
-You are an exhaustive and precise clinical keyword and entity extraction engine.
-Analyze the following clinical report and extract ALL valid medical entities, pathogens, conditions, lab metrics, observations, symptoms, procedures, and medications that are **actively associated with the patient in the current clinical context**.
+你是一個極盡詳盡且精準的臨床關鍵字與實體萃取引擎。
+請分析以下臨床報告，並萃取所有在當前臨床情境中與該病患直接相關，或在報告文字／表格中被明確檢測到的有效醫療實體、病原體、疾病狀況、實驗室指標、觀察值、症狀、處置與藥物。
 
-[CRITICAL EXTRACTION RULES]:
-1. **Factuality Constraint**: Extract ONLY entities, conditions, medications, and symptoms that are explicitly stated as present, diagnosed, measured, or currently prescribed for the patient in the text.
-2. **Exclude Hypotheticals & Warnings**: DO NOT extract hypothetical substances, potential drug-supplement interactions (e.g., Vitamin E mentioned only as a warning), unprescribed medications, or general educational remarks unless they are part of the patient's actual medical history, current chart, or active prescription list.
-3. **Do not hallucinate** or manufacture entities not directly supported by the report text.
+[關鍵萃取規則]：
+1. 事實性約束（Factuality Constraint）：萃取在報告文字與數據表格中明確陳述為「存在、已診斷、已測量或被檢測到」的實體、疾病、藥物、症狀與檢測出的微生物。即使有微生物被討論為背景菌叢或共生菌，由於牠們是經由實驗檢測出來的，因此仍必須歸類在「病原體與微生物」類別中進行萃取。
+2. 排除假設、警告與背景知識：請勿萃取純粹的假設性病況、理論上的風險、僅在衛教討論中提及且未處方的預防性藥物、尚未發生的潛在藥物不良反應，或是純粹的生物醫學文獻背景（例如：僅在學術上討論、但未實際診斷於病患身上的疾病或補充品）。
+3. 切勿產生幻覺或捏造未直接獲得報告文本支持的實體。
 
-Categorize the extracted entities into the following structures:
-1. Conditions / Diagnoses (e.g., SARS-CoV-2 infection, Viral sinusitis, Hypertension)
-2. Pathogens & Microbes (e.g., Severe acute respiratory syndrome-related coronavirus, Bacteroides)
-3. Laboratory / mNGS Metrics (e.g., rPM, Z-score, Read counts, Coverage)
-4. Symptoms / Phenotypes (e.g., Sore throat, Nasal congestion)
-5. Active Medications / Treatments (e.g., Amoxicillin/Clavulanate, Hydrochlorothiazide — strictly those prescribed to the patient)
-6. Specimens & Technical Metadata (e.g., Nasopharyngeal swab, RNA-based metagenomic sequencing)
+請將萃取的實體分類至以下結構中：
+1. 疾病狀況 / 診斷（例如：SARS-CoV-2 感染、病毒性鼻竇炎、高血壓）
+2. 病原體與微生物（例如：嚴重急性呼吸道症候群冠狀病毒相關病毒、顫螺菌科細菌、威爾布尼斯迪斯莫桿菌、擬桿菌屬、副擬桿菌屬、溶血吉姆菌、鏈球菌屬、空腸普雷沃菌）
+3. 實驗室 / mNGS 指標（例如：rPM、Z 分數、reads 數、覆蓋率、總原始 reads 數、非宿主 reads 數）
+4. 症狀 / 表型（例如：喉嚨痛、鼻塞、腹瀉）
+5. 現行藥物 / 治療（例如：阿莫西林/克拉維酸、氫氯噻嗪 — 嚴格限制為開立給該病患的藥物）
+6. 檢體與技術元數據（例如：鼻咽拭子、基於 RNA 的巨基因體定序、IDSeq 平臺）
 
-Report Text:
+報告文字：
 \"\"\"{report_markdown}
 \"\"\"
 """
