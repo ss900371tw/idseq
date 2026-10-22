@@ -1039,8 +1039,11 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: s
         "Pseudomonas", "P. aeruginosa", "Aeruginosa", "Escherichia", "E. coli", "Coli",
         "Enterococcus", "Streptococcus", "Salmonella", "Acinetobacter", "Haemophilus", "Influenzae",
         "Clostridioides", "Mycoplasma", "Mycobacterium", "Tuberculosis", "Candida", "Aspergillus",
-        "Pneumonia", "Sepsis", "Bronchitis", "Asthma", "Urinary", "UTI", "Urosepsis", "Bacteremia",
-        "Beta-lactam", "Tetracycline", "Vancomycin", "Ciprofloxacin", "Metformin"
+        "SARS-CoV-2", "COVID-19", "Influenza", "RSV", "BA.5", "JN.1", "Delta",
+        "blaKPC", "blaNDM", "blaCTX-M", "mecA", "vanA", "mcr-1", "gyrA",
+        "Pneumonia", "Sepsis", "Bronchitis", "Asthma", "Urinary", "UTI", "Urosepsis", "Bacteremia", "Diabetes",
+        "Beta-lactam", "Tetracycline", "Vancomycin", "Piperacillin", "Ciprofloxacin", "Meropenem", "Metformin", "Albuterol", "Amoxicillin", "Ibuprofen",
+        "Fever", "Tachypnea", "Tachycardia", "Leukocytosis", "Dyspnea", "Cough", "Hypotension", "Lactic Acidosis"
     ]
 
     def extract_keywords_via_gemini(text: str, category_name: str, max_count: int = 10) -> list:
@@ -1155,358 +1158,87 @@ Text:
         st.session_state.kg_context_retrieved = msg
         return msg
 
-    context_sections = []
+    # ----------------------------------------------------
+    # 集中式 Neo4j 知識圖譜檢索 (替代原先使用 LLM 假三元組的錯誤模式)
+    # ----------------------------------------------------
+    neo4j_uri = st.session_state.get("neo4j_uri", "bolt://localhost:7687")
+    neo4j_user = st.session_state.get("neo4j_user", "neo4j")
+    neo4j_password = st.session_state.get("neo4j_password", "idseqneo4j")
 
-    # 建立關鍵字萃取與合併的可視化摘要
-    summary_text = (
-        f"🔑 **多元知識圖譜關鍵字開放式動態萃取摘要 (Keywords Extraction Strategy: {extraction_method}):**\n"
-        f"- 📄 **上傳檔案關鍵字 (Uploaded Files) (最多10個):** {', '.join(file_terms) if file_terms else '無匹配'}\n"
-        f"  * 路由目標圖譜: "
-        f"{'MetagenomicKG (Neo4j Live)' if mode == 'Metagenomics' else 'BV-BRC (Bacterial and Viral Bioinformatics Resource Center)' if mode == 'Consensus Genome' else 'CARD (Comprehensive Antibiotic Resistance Database)'}\n"
-        f"- 📋 **臨床病歷關鍵字 (FHIR Clinical Records) (最多10個):** {', '.join(records_terms) if records_terms else '無匹配'}\n"
-        f"  * 路由目標圖譜: PrimeKG (Precision Medicine Graph)\n"
+    from neo4j_kg_service import retrieve_centralized_neo4j_kg
+    ret_val = retrieve_centralized_neo4j_kg(
+        file_terms=file_terms,
+        records_terms=records_terms,
+        mode=mode,
+        uri=neo4j_uri,
+        user=neo4j_user,
+        password=neo4j_password
     )
-    context_sections.append(summary_text)
-
-    # ----------------------------------------------------
-    # A. 針對上傳檔案關鍵字 (File-Extracted Terms) 進行模組化路由檢索
-    # ----------------------------------------------------
-    if file_terms:
-        if mode == "Metagenomics":
-            # 🌐 軌道 1：Metagenomics 模組上傳檔案 ➡️ 查詢 MetagenomicKG Neo4j Live DB
-            context_sections.append("🌐 [MetagenomicKG Knowledge Graph Live Retrieval Result (For Metagenomics File-extracted Pathogens)]")
-            uri = "bolt://mkg.cse.psu.edu:7687"
-            auth = ("neo4j", "klabneo4j")
-
-            try:
-                driver = GraphDatabase.driver(uri, auth=auth)
-                with driver.session() as session:
-                    for term in file_terms:
-                        context_sections.append(f"📌 MetagenomicKG Context for: '{term}'")
-                        
-                        # A. 檢索疾病資訊
-                        res_dis = session.run(
-                            "MATCH (d:`biolink:Disease`) WHERE any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                            "RETURN d.all_names[0] AS name, d.description AS desc LIMIT 2",
-                            term=term
-                        )
-                        for rec in res_dis:
-                            desc_clean = re.sub(r'<[^>]+>', '', rec["desc"] or "")[:400]
-                            context_sections.append(f"  - **Disease**: {rec['name']}\n    *Description*: {desc_clean}")
-
-                        # B. 檢索微生物與病原體屬性
-                        res_micro = session.run(
-                            "MATCH (m:`biolink:OrganismTaxon`) WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                            "RETURN m.all_names[0] AS name, m.description AS desc, m.is_pathogen AS is_pathogen LIMIT 2",
-                            term=term
-                        )
-                        for rec in res_micro:
-                            context_sections.append(f"  - **Pathogen**: {rec['name']} (Is Pathogen: {rec['is_pathogen']})\n    *Description*: {rec['desc']}")
-
-                        # C. 檢索微生物與疾病之已知關聯 (Associations)
-                        res_rel = session.run(
-                            "MATCH (m:`biolink:OrganismTaxon`)-[r:`biolink:associated_with`]-(d:`biolink:Disease`) "
-                            "WHERE any(n in m.all_names WHERE toLower(n) CONTAINS toLower($term)) OR "
-                            "      any(n in d.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                            "RETURN m.all_names[0] AS microbe, d.all_names[0] AS disease LIMIT 2",
-                            term=term
-                        )
-                        rels = []
-                        for rec in res_rel:
-                            rels.append(f"'{rec['microbe']}' is associated with disease '{rec['disease']}'")
-                        if rels:
-                            context_sections.append("  - **Linked Associations**:\n    " + "\n    ".join(rels))
-
-                        # D. 檢索藥物/化學物資訊
-                        res_drug = session.run(
-                            "MATCH (dr:`biolink:Drug`) WHERE any(n in dr.all_names WHERE toLower(n) CONTAINS toLower($term)) "
-                            "RETURN dr.all_names[0] AS name, dr.description AS desc LIMIT 2",
-                            term=term
-                        )
-                        for rec in res_drug:
-                            context_sections.append(f"  - **Recommended Drug/Chemical**: {rec['name']}\n    *Details*: {rec['desc']}")
-
-                driver.close()
-            except Exception as e:
-                context_sections.append(f"⚠️ Failed to live-query MetagenomicKG: {e}")
-                context_sections.append("- Local Backup Fact: Staphylococcus aureus is a major human pathogen associated with skin, soft tissue, and systemic infections like sepsis and pneumonia.")
-
-        elif mode == "Consensus Genome":
-            # 🧬 軌道 2：Consensus Genome 模組上傳檔案 ➡️ 查詢 BV-BRC (Bacterial and Viral Bioinformatics Resource Center) 知識圖譜
-            context_sections.append("🧬 [BV-BRC (Bacterial and Viral Bioinformatics Resource Center) Live Ontology Lookup (For Viral & Bacterial Genomes)]")
-            
-            api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
-            if api_key:
-                import google.generativeai as genai
-                import json
-                from pydantic import BaseModel, Field
-                from typing import List
-
-                try:
-                    genai.configure(api_key=api_key)
-                    model_flash = genai.GenerativeModel("gemini-2.5-flash")
-                    
-                    class BVBRCRelationship(BaseModel):
-                        source_node_name: str = Field(description="Name of the source node (Strain/Isolate, Feature/Gene, Protein, Virulence Factor, Host Interaction)")
-                        source_node_type: str = Field(description="Strain/Isolate, Feature/Gene, Protein, Virulence Factor, Host Interaction")
-                        source_id: str = Field(description="BV-BRC ID or standard ID (e.g. NCBI:1024, BVBRC:Gene_Spike, PDB:7DK3)")
-                        relation_type: str = Field(description="Edge type: has_lineage, expresses_protein, associated_with_virulence, interacts_with_host_receptor, resistant_to_drug")
-                        target_node_name: str = Field(description="Name of the target node")
-                        target_node_type: str = Field(description="Type of the target node")
-                        target_id: str = Field(description="Standardized ID of the target node")
-                        description: str = Field(description="Genomic, structural, lineage, and host interaction details of this viral/bacterial relation")
-
-                    class BVBRCQueryResult(BaseModel):
-                        queried_term: str = Field(description="The viral/bacterial strain or genomic keyword queried")
-                        mapped_node_name: str = Field(description="Canonical standard strain/gene name mapped in BV-BRC")
-                        mapped_node_type: str = Field(description="Strain/Isolate, Feature/Gene, Protein, or Virulence Factor")
-                        mapped_id: str = Field(description="Standard BV-BRC / NCBI taxon ID")
-                        relationships: List[BVBRCRelationship] = Field(description="List of standardized BV-BRC structural and functional genome relationships")
-
-                    class BVBRCOutput(BaseModel):
-                        results: List[BVBRCQueryResult] = Field(description="BV-BRC genome mapping and strain lineage results")
-
-                    prompt = f"""
-You are an expert bioinformatician representing the BV-BRC (Bacterial and Viral Bioinformatics Resource Center) genomics database.
-Analyze the following viral/bacterial terms, map them to BV-BRC standard strains/features, and retrieve their genomic, lineage, and host-pathogen relationships.
-
-Keywords to query:
-{file_terms}
-
-Instructions:
-1. Map each keyword to its canonical BV-BRC node type (Strain/Isolate, Feature/Gene, Protein, Virulence Factor) and standard IDs (NCBITaxon ID for strains, BV-BRC Feature ID for viral/bacterial genes).
-2. Retrieve at least 3 high-signal relationships representing official BV-BRC schema edges (e.g., has_lineage, expresses_protein, associated_with_virulence, interacts_with_host_receptor, resistant_to_drug).
-3. Populate the schema with scientific accuracy, detailing Pangolin lineages, viral clades, spike/envelope protein structural interactions, and viral virulence mechanisms.
-"""
-                    response = model_flash.generate_content(
-                        prompt,
-                        generation_config=genai.GenerationConfig(
-                            response_mime_type="application/json",
-                            response_schema=BVBRCOutput
-                        )
-                    )
-                    
-                    raw_res = response.text.strip()
-                    if raw_res.startswith("```json"):
-                        raw_res = raw_res.split("```json")[1].split("```")[0].strip()
-                    elif raw_res.startswith("```"):
-                        raw_res = raw_res.split("```")[1].split("```")[0].strip()
-                    data = json.loads(raw_res)
-                    
-                    for res in data.get("results", []):
-                        term = res.get("queried_term")
-                        node_name = res.get("mapped_node_name")
-                        node_type = res.get("mapped_node_type")
-                        node_id = res.get("mapped_id")
-                        
-                        context_sections.append(f"📌 **BV-BRC Genome Database Ontological Mapping for: '{term}'**")
-                        context_sections.append(f"  - **Standard Entity**: {node_name} ({node_type} | Standard ID: `{node_id}`)")
-                        context_sections.append("  - **Genomic Features, Lineages & Host-Pathogen Interactions (BV-BRC Edges)**:")
-                        
-                        for rel in res.get("relationships", []):
-                            src_name = rel.get("source_node_name")
-                            src_type = rel.get("source_node_type")
-                            src_id = rel.get("source_id")
-                            edge = rel.get("relation_type")
-                            tgt_name = rel.get("target_node_name")
-                            tgt_type = rel.get("target_node_type")
-                            tgt_id = rel.get("target_id")
-                            desc = rel.get("description")
-                            
-                            context_sections.append(f"    * `({src_name}:{src_type} [{src_id}]) -[{edge}]-> ({tgt_name}:{tgt_type} [{tgt_id}])`")
-                            context_sections.append(f"      *Biological Significance*: {desc}")
-                        context_sections.append("")
-                except Exception as e:
-                    context_sections.append(f"⚠️ Failed to query BV-BRC dynamically: {e}")
-            else:
-                context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic BV-BRC lookup.")
-
-        elif mode == "Antimicrobial Resistance":
-            # 💊 軌道 3：Antimicrobial Resistance 模組上傳檔案 ➡️ 查詢 CARD (Comprehensive Antibiotic Resistance Database)
-            context_sections.append("💊 [CARD (Comprehensive Antibiotic Resistance Database) live ontology lookup (For AMR genes & mechanisms)]")
-            
-            api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
-            if api_key:
-                import google.generativeai as genai
-                import json
-                from pydantic import BaseModel, Field
-                from typing import List
-
-                try:
-                    genai.configure(api_key=api_key)
-                    model_flash = genai.GenerativeModel("gemini-2.5-flash")
-                    
-                    class CARDRelationship(BaseModel):
-                        source_node_name: str = Field(description="Name of the source node (AMR Gene, AMR Mechanism, Drug Class, Organism)")
-                        source_node_type: str = Field(description="AMR Gene, AMR Mechanism, Drug Class, Organism")
-                        source_id: str = Field(description="ARO (Antibiotic Resistance Ontology) ID (e.g. ARO:3000015, ARO:0000036)")
-                        relation_type: str = Field(description="Edge type: confers_resistance_to, has_mechanism, detected_in, part_of_operon")
-                        target_node_name: str = Field(description="Name of the target node")
-                        target_node_type: str = Field(description="Type of the target node")
-                        target_id: str = Field(description="Standardized ontology ID of the target node")
-                        description: str = Field(description="Pharmacological resistance mechanism and antibiotic inactivation detail")
-
-                    class CARDQueryResult(BaseModel):
-                        queried_term: str = Field(description="The antibiotic/AMR keyword queried")
-                        mapped_node_name: str = Field(description="Canonical standard AMR Gene name mapped in CARD")
-                        mapped_node_type: str = Field(description="AMR Gene, AMR Mechanism, Drug Class, or Organism")
-                        mapped_id: str = Field(description="Standardized ARO ID (e.g. ARO:3000015)")
-                        relationships: List[CARDRelationship] = Field(description="List of standardized CARD relationships for this AMR marker")
-
-                    class CARDOutput(BaseModel):
-                        results: List[CARDQueryResult] = Field(description="CARD ontology lookup results")
-
-                    prompt = f"""
-You are an expert clinical microbiologist representing the CARD (Comprehensive Antibiotic Resistance Database) ontology system.
-Analyze the following AMR genes, drug resistance keywords, and organisms, map them to CARD standard ARO ontology nodes, and retrieve their relationships.
-
-Keywords to query:
-{file_terms}
-
-Instructions:
-1. Map each keyword to its canonical CARD ARO (Antibiotic Resistance Ontology) ID and node type (AMR Gene, AMR Mechanism, Drug Class, Organism).
-2. Retrieve at least 3 high-signal relationships representing official CARD database edges (e.g., confers_resistance_to, has_mechanism, detected_in, part_of_operon).
-3. Populate the schema with scientific accuracy, detailing antibiotic efflux pumps, enzyme inactivation, carbapenemases, or beta-lactamase operons.
-"""
-                    response = model_flash.generate_content(
-                        prompt,
-                        generation_config=genai.GenerationConfig(
-                            response_mime_type="application/json",
-                            response_schema=CARDOutput
-                        )
-                    )
-                    
-                    raw_res = response.text.strip()
-                    if raw_res.startswith("```json"):
-                        raw_res = raw_res.split("```json")[1].split("```")[0].strip()
-                    elif raw_res.startswith("```"):
-                        raw_res = raw_res.split("```")[1].split("```")[0].strip()
-                    data = json.loads(raw_res)
-                    
-                    for res in data.get("results", []):
-                        term = res.get("queried_term")
-                        node_name = res.get("mapped_node_name")
-                        node_type = res.get("mapped_node_type")
-                        node_id = res.get("mapped_id")
-                        
-                        context_sections.append(f"📌 **CARD (ARO Ontology) Mapping for: '{term}'**")
-                        context_sections.append(f"  - **Standard Entity**: {node_name} ({node_type} | Standard ID: `{node_id}`)")
-                        context_sections.append("  - **CARD Antibiotic Resistance Mechanisms & Phenotypes (CARD Edges)**:")
-                        
-                        for rel in res.get("relationships", []):
-                            src_name = rel.get("source_node_name")
-                            src_type = rel.get("source_node_type")
-                            src_id = rel.get("source_id")
-                            edge = rel.get("relation_type")
-                            tgt_name = rel.get("target_node_name")
-                            tgt_type = rel.get("target_node_type")
-                            tgt_id = rel.get("target_id")
-                            desc = rel.get("description")
-                            
-                            context_sections.append(f"    * `({src_name}:{src_type} [{src_id}]) -[{edge}]-> ({tgt_name}:{tgt_type} [{tgt_id}])`")
-                            context_sections.append(f"      *Resistance Detail*: {desc}")
-                        context_sections.append("")
-                except Exception as e:
-                    context_sections.append(f"⚠️ Failed to query CARD dynamically: {e}")
-            else:
-                context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic CARD lookup.")
-
-    # ----------------------------------------------------
-    # B. 針對病患臨床紀錄 (FHIR Clinical Records) 全模組 ➡️ 查詢/檢索 PrimeKG 精準醫學圖譜
-    # ----------------------------------------------------
-    if records_terms:
-        context_sections.append("🧬 [PrimeKG Precision Medicine Graph Live Retrieval Result (For Patient Clinical Records)]")
-        
-        api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
-        if api_key:
-            import google.generativeai as genai
-            import json
-            from pydantic import BaseModel, Field
-            from typing import List
-
-            try:
-                genai.configure(api_key=api_key)
-                model_flash = genai.GenerativeModel("gemini-2.5-flash")
-                
-                class PrimeKGRelationship(BaseModel):
-                    source_node_name: str = Field(description="Name of the source node")
-                    source_node_type: str = Field(description="Type of the source node (e.g., Disease, Drug, Phenotype, Gene/Protein, Pathway, Anatomy)")
-                    source_id: str = Field(description="Standardized ontology ID (e.g., MONDO:0005015, DB00047, HP:0002090, HGNC:1101, Reactome:R-HSA-109581, UBERON:0002048)")
-                    relation_type: str = Field(description="Edge type: indication, contraindication, side effect, disease_phenotype, disease_protein, drug_protein, disease_disease, pathway_protein, anatomy_protein, protein_protein, etc.")
-                    target_node_name: str = Field(description="Name of the target node")
-                    target_node_type: str = Field(description="Type of the target node")
-                    target_id: str = Field(description="Standardized ontology ID of the target node")
-                    description: str = Field(description="Clinical and pharmacological significance of this relationship")
-
-                class PrimeKGQueryResult(BaseModel):
-                    queried_term: str = Field(description="The clinical keyword queried in PrimeKG")
-                    mapped_node_name: str = Field(description="The canonical standard name mapped to this term in PrimeKG")
-                    mapped_node_type: str = Field(description="Disease, Drug, Phenotype, Gene/Protein, or Pathway")
-                    mapped_id: str = Field(description="Ontology ID (MONDO, DrugBank, HPO, etc.)")
-                    relationships: List[PrimeKGRelationship] = Field(description="List of standardized PrimeKG relationships for this entity")
-
-                class PrimeKGOutput(BaseModel):
-                    results: List[PrimeKGQueryResult] = Field(description="PrimeKG clinical context mapping results")
-
-                prompt = f"""
-You are an expert precision medicine bioinformatician representing the Harvard PrimeKG Precision Medicine Knowledge Graph database.
-Analyze the following clinical keywords from the patient's record, map them to standard PrimeKG nodes, and retrieve their relationships.
-
-Keywords to query:
-{records_terms}
-
-Instructions:
-1. Map each keyword to its canonical PrimeKG node type (Disease, Drug, Phenotype, Gene/Protein, Pathway, Anatomy) and ID system (MONDO for Disease, DrugBank for Drug, HPO for Phenotype, NCBI Gene for Gene, Reactome for Pathway, UBERON for Anatomy).
-2. Retrieve at least 3 high-signal relationships representing official PrimeKG edges (e.g., indication, contraindication, side effect, disease_phenotype, disease_protein, drug_protein, disease_disease, pathway_protein, anatomy_protein).
-3. Populate the schema accurately. Keep descriptions extremely informative and clinically sound.
-"""
-                response = model_flash.generate_content(
-                    prompt,
-                    generation_config=genai.GenerationConfig(
-                        response_mime_type="application/json",
-                        response_schema=PrimeKGOutput
-                    )
-                )
-                
-                raw_res = response.text.strip()
-                if raw_res.startswith("```json"):
-                    raw_res = raw_res.split("```json")[1].split("```")[0].strip()
-                elif raw_res.startswith("```"):
-                    raw_res = raw_res.split("```")[1].split("```")[0].strip()
-                data = json.loads(raw_res)
-                
-                for res in data.get("results", []):
-                    term = res.get("queried_term")
-                    node_name = res.get("mapped_node_name")
-                    node_type = res.get("mapped_node_type")
-                    node_id = res.get("mapped_id")
-                    
-                    context_sections.append(f"📌 **PrimeKG Ontological Mapping for FHIR Patient Record: '{term}'**")
-                    context_sections.append(f"  - **Standard Entity**: {node_name} ({node_type} | Standard ID: `{node_id}`)")
-                    context_sections.append("  - **Standardized Precision Medicine Relationships (PrimeKG Edges)**:")
-                    
-                    for rel in res.get("relationships", []):
-                        src_name = rel.get("source_node_name")
-                        src_type = rel.get("source_node_type")
-                        src_id = rel.get("source_id")
-                        edge = rel.get("relation_type")
-                        tgt_name = rel.get("target_node_name")
-                        tgt_type = rel.get("target_node_type")
-                        tgt_id = rel.get("target_id")
-                        desc = rel.get("description")
-                        
-                        context_sections.append(f"    * `({src_name}:{src_type} [{src_id}]) -[{edge}]-> ({tgt_name}:{tgt_type} [{tgt_id}])`")
-                        context_sections.append(f"      *Clinical Significance*: {desc}")
-                    context_sections.append("")
-            except Exception as e:
-                context_sections.append(f"⚠️ Failed to query PrimeKG dynamically: {e}")
-        else:
-            context_sections.append("⚠️ Gemini API Key not configured. Skipping dynamic PrimeKG lookup.")
-
-    ret_val = "\n\n".join(context_sections)
     st.session_state.kg_context_retrieved = ret_val
     return ret_val
 
+
+def build_patient_clinical_summary():
+    """
+    從目前連線之 FHIR 伺服器與 Session State 調閱當前病患之完整臨床摘要：
+    包含基本身分 (Demographics)、生命徵象 (Vitals)、實驗室血液常規檢驗 (CBC)、
+    臨床疾病診斷 (Conditions)、藥物處方紀錄 (Medications) 以及醫療處置與手術 (Procedures)。
+    """
+    if not st.session_state.get("active_patient_demographics"):
+        return "⚠️ 【目前臨床連線狀態】: 未連接任何個別病患 FHIR 臨床病歷（分析將完全依據上傳之 mNGS 數據進行）。"
+
+    p = st.session_state.active_patient_demographics
+    p_id = p.get("id")
+    token = st.session_state.get("fhir_token")
+    fhir_url = st.session_state.get("fhir_url", DEFAULT_FHIR_URL)
+
+    # 1. 基本個資與年齡計算
+    age_str = "未知"
+    b_date = p.get("birthDate", "Unknown")
+    if b_date and b_date != "Unknown":
+        try:
+            b_year = int(b_date.split("-")[0])
+            age_str = f"{datetime.now().year - b_year} 歲"
+        except Exception:
+            pass
+
+    # 2. 調閱詳細病歷
+    conditions = get_fhir_patient_details(fhir_url, p_id, token)
+    medications = get_fhir_patient_medications(fhir_url, p_id, token)
+    procedures = get_fhir_patient_procedures(fhir_url, p_id, token)
+    vitals, labs = get_fhir_patient_observations(fhir_url, p_id, token)
+
+    # 3. 生命徵象格式化
+    height_val = next((v for k, v in vitals.items() if "height" in k.lower()), "N/A")
+    weight_val = next((v for k, v in vitals.items() if "weight" in k.lower() and "length" not in k.lower()), "N/A")
+    hr_val = next((v for k, v in vitals.items() if "heart rate" in k.lower()), "N/A")
+    rr_val = next((v for k, v in vitals.items() if "respiratory rate" in k.lower()), "N/A")
+    pain_val = next((v for k, v in vitals.items() if "pain severity" in k.lower()), "N/A")
+    head_val = next((v for k, v in vitals.items() if "head occipital-frontal circumference" in k.lower() and "percentile" not in k.lower()), "N/A")
+
+    # 4. 實驗室檢驗 (CBC) 格式化
+    wbc_val = next((v for k, v in labs.items() if "leukocytes" in k.lower()), "N/A")
+    rbc_val = next((v for k, v in labs.items() if "erythrocytes" in k.lower()), "N/A")
+    hb_val = next((v for k, v in labs.items() if "hemoglobin" in k.lower()), "N/A")
+    hct_val = next((v for k, v in labs.items() if "hematocrit" in k.lower()), "N/A")
+    mcv_val = next((v for k, v in labs.items() if "mcv" in k.lower() or "mean volume" in k.lower()), "N/A")
+    mch_val = next((v for k, v in labs.items() if "mch" in k.lower() and "mchc" not in k.lower()), "N/A")
+    mchc_val = next((v for k, v in labs.items() if "mchc" in k.lower()), "N/A")
+    rdw_val = next((v for k, v in labs.items() if "distwidth" in k.lower() or "erythrocyte distribution width" in k.lower()), "N/A")
+
+    lines = [
+        "=========================================================================================",
+        "🏥 當前連接病患完整臨床電子病歷摘要 (ACTIVE EHR PATIENT CLINICAL PROFILE)",
+        "=========================================================================================",
+        f"👤 【病患基本個資 (Demographics)】: 姓名: {p.get('name')} | 病歷號 (ID): {p_id} | 性別: {p.get('gender', 'unknown').upper()} | 出生日期: {b_date} ({age_str}) | 來源系統: {p.get('source', fhir_url)}",
+        f"💓 【生命徵象 (Vital Signs)】: 身高: {height_val} | 體重: {weight_val} | 心率 (HR): {hr_val} | 呼吸頻率 (RR): {rr_val} | 疼痛指數: {pain_val} | 頭圍: {head_val}",
+        f"🔬 【血液常規檢驗 (CBC Labs)】: WBC: {wbc_val} | RBC: {rbc_val} | Hb: {hb_val} | Hct: {hct_val} | MCV: {mcv_val} | MCH: {mch_val} | MCHC: {mchc_val} | RDW: {rdw_val}",
+        f"📋 【確診疾病與臨床診斷 (Active Conditions)】: {', '.join(conditions) if conditions else '無明確診斷紀錄'}",
+        f"💊 【當前用藥與處方紀錄 (Active Medications)】: {', '.join(medications) if medications else '無處方紀錄'}",
+        f"🩺 【醫療處置與處置記錄 (Procedures)】: {', '.join(procedures) if procedures else '無醫療處置紀錄'}",
+        "========================================================================================="
+    ]
+    return "\n".join(lines)
 
 
 def generate_llm_prompt(mode, file_contents):
@@ -1524,6 +1256,8 @@ def generate_llm_prompt(mode, file_contents):
         "Antimicrobial Resistance Results": "Includes resistance reports, complete resistance indicators, intermediate analysis results, and CARD RGI tool outputs.",
         "Combined AMR Results": "Integrates indicators of drug resistance genes (e.g., coverage, depth) in samples into a single report."
     }
+
+    patient_summary = build_patient_clinical_summary()
 
     summary_lines = []
 
@@ -1544,7 +1278,11 @@ def generate_llm_prompt(mode, file_contents):
     summary_lines.append(f"\n📚 Textbook Supplementary Knowledge:\n{context_text}")
 
     prompt_template = TEMPLATE_MAP[mode]
-    return prompt_template.format(csv_content="\n".join(summary_lines))
+    base_prompt = prompt_template.format(csv_content="\n".join(summary_lines))
+
+    # 在所有三個模組的分析提示詞最頂部，統一注入當前連線病患之完整臨床摘要
+    full_prompt = f"{patient_summary}\n\n{base_prompt}"
+    return full_prompt
 
 
 
@@ -1932,7 +1670,7 @@ def render_mode_card(icon, title, desc, key):
     st.button(
         button_text,
         key=f"{key}_btn",
-        width="stretch",
+        use_container_width=True,
         on_click=select_mode,
         args=(title,),
     )
@@ -2130,6 +1868,35 @@ def main():
         help="輸入您的 UMLS API 金鑰。預設已自動帶入系統內置的金鑰。"
     )
     st.session_state.user_umls_key = user_umls_key
+
+    # ---------- Neo4j 集中式知識圖譜配置 ----------
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🌐 Neo4j 集中式知識圖譜")
+    neo4j_uri_val = st.sidebar.text_input(
+        "Neo4j Bolt 網址",
+        value=st.session_state.get("neo4j_uri", "bolt://localhost:7687"),
+        help="輸入 Neo4j 連線 URI，預設為本機 bolt://localhost:7687"
+    )
+    neo4j_user_val = st.sidebar.text_input(
+        "Neo4j 帳號",
+        value=st.session_state.get("neo4j_user", "neo4j")
+    )
+    neo4j_pwd_val = st.sidebar.text_input(
+        "Neo4j 密碼",
+        value=st.session_state.get("neo4j_password", "idseqneo4j"),
+        type="password"
+    )
+    st.session_state.neo4j_uri = neo4j_uri_val
+    st.session_state.neo4j_user = neo4j_user_val
+    st.session_state.neo4j_password = neo4j_pwd_val
+
+    if st.sidebar.button("🔍 測試 Neo4j 圖譜連線"):
+        from neo4j_kg_service import test_neo4j_connection
+        res = test_neo4j_connection(neo4j_uri_val, neo4j_user_val, neo4j_pwd_val)
+        if res["success"]:
+            st.sidebar.success(f"🟢 {res['message']}")
+        else:
+            st.sidebar.error(f"🔴 {res['message']}")
 
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
     if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics:
