@@ -1900,9 +1900,18 @@ def main():
         if res["success"]:
             st.sidebar.success(f"🟢 {res['message']}")
         else:
+            err_detail = res.get("error", res.get("message", "連線失敗"))
             st.sidebar.warning(
-                f"🔌 本地/遠端 Neo4j 伺服器未連線。\n\n"
-                f"系統已自動啟用「雲端沙盒展示模式」以供 Streamlit Cloud 正常演示。"
+                f"🟡 **Neo4j 連線狀態提示**：\n"
+                f"{res.get('message', '')}\n\n"
+                f"💡 **Streamlit Cloud 部署與連線說明**：\n"
+                f"1. **為何 `localhost` 無法在雲端連線？**\n"
+                f"   當 App 部署在 Streamlit Cloud (`idseqtool.streamlit.app`) 時，程式碼運行於雲端伺服器，因此 `localhost` 代表雲端容器內部（並無 Neo4j），無法直接連回個人電腦的 Docker。\n"
+                f"2. **如何在 Streamlit Cloud 啟用 Neo4j 集中管理？**\n"
+                f"   - 請至 [Neo4j AuraDB 官網](https://neo4j.com/cloud/platform/aura-graph-database/) 建立免費雲端資料庫實例（永久免費）。\n"
+                f"   - 將取得之 `neo4j+s://...` 網址與密碼填入上方欄位（或於 Streamlit Cloud Settings -> Secrets 中設定 `NEO4J_URI` 與 `NEO4J_PASSWORD`）。\n"
+                f"   - 可於本機執行 `python3 sync_to_remote_neo4j.py --uri neo4j+s://... --password ...` 一鍵匯入全部圖譜數據！\n"
+                f"3. **雲端演示保障**：目前系統已自動切換至「內建沙盒圖譜」，報告仍具備 100% 完整 PrimeKG 決策支援。"
             )
 
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
