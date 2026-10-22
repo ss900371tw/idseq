@@ -1021,34 +1021,57 @@ except Exception as e:
     chat = None
 
 
-# ✅ MetagenomicKG / PrimeKG 知識圖譜檢索函數
+# ✅ 集中式知識圖譜檢索函數 (嚴格領域分立：病患用 PrimeKG，Metagenomics 用 MetagenomicKG，CG 用 BV-BRC，AMR 用 CARD)
 def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: str = None):
     """
-    用 MetagenomicKG 與 PrimeKG 圖資料庫檢索替代原有的 FAISS 向量檢索。
-    根據當前分析模組 (mode) 與上傳數據、病患臨床診斷紀錄 (Conditions) 自動萃取臨床關鍵字並進行語意檢索：
-    - Consensus Genome 模組：考量到單一病毒（如 SARS-CoV-2）微觀突變不適用 macro-species 的 MetagenomicKG，
-      因此完全路由至 PrimeKG（精準醫學圖譜，對應臨床表型、併發症與對症藥物網絡）。
-    - 其他模組：採用 MetagenomicKG (處理 macro-species 與疾病關聯) + PrimeKG (處理患者病歷的精準臨床網絡) 的混合雙圖譜模式。
+    依據分析模組與病患臨床病歷執行精確的領域分立檢索：
+    1. 上傳檔案 (File Entities):
+        - Metagenomics 模組 -> 專屬檢索 MetagenomicKG (微生物病原體分類與感染症候群)
+        - Consensus Genome 模組 -> 專屬檢索 BV-BRC (病毒基因組結構、突變位點與演化譜系)
+        - Antimicrobial Resistance 模組 -> 專屬檢索 CARD ARO (抗藥基因與耐藥機制)
+    2. 當前連接病患臨床資訊 (FHIR Clinical Records):
+        - 無論是哪一個模組，病患臨床資訊 (確診疾病、用藥處方、臨床表型) 一律專屬對應 PrimeKG (精準醫學圖譜)
     """
     import re
     from neo4j import GraphDatabase
 
-    # 1. 萃取關鍵字
-    candidate_terms = [
-        "Staphylococcus", "S. aureus", "Aureus", "Klebsiella", "K. pneumoniae", "Pneumoniae",
-        "Pseudomonas", "P. aeruginosa", "Aeruginosa", "Escherichia", "E. coli", "Coli",
-        "Enterococcus", "Streptococcus", "Salmonella", "Acinetobacter", "Haemophilus", "Influenzae",
-        "Clostridioides", "Mycoplasma", "Mycobacterium", "Tuberculosis", "Candida", "Aspergillus",
-        "SARS-CoV-2", "COVID-19", "Influenza", "RSV", "BA.5", "JN.1", "Delta",
-        "blaKPC", "blaNDM", "blaCTX-M", "mecA", "vanA", "mcr-1", "gyrA",
-        "Pneumonia", "Sepsis", "Bronchitis", "Asthma", "Urinary", "UTI", "Urosepsis", "Bacteremia", "Diabetes",
-        "Beta-lactam", "Tetracycline", "Vancomycin", "Piperacillin", "Ciprofloxacin", "Meropenem", "Metformin", "Albuterol", "Amoxicillin", "Ibuprofen",
-        "Fever", "Tachypnea", "Tachycardia", "Leukocytosis", "Dyspnea", "Cough", "Hypotension", "Lactic Acidosis"
+    # 領域候選詞庫 (當動態萃取離線時使用的精準 Heuristic 詞庫)
+    PRIMEKG_PATIENT_CANDIDATES = [
+        "Sepsis", "Severe Sepsis", "Pneumonia", "Bacterial Pneumonia", "Bronchitis", "Acute Bronchitis",
+        "Asthma", "Urinary Tract Infection", "UTI", "Urosepsis", "Bacteremia", "Type 2 Diabetes Mellitus", "Diabetes",
+        "Vancomycin", "Piperacillin-Tazobactam", "Piperacillin", "Metformin", "Albuterol", "Amoxicillin", "Ciprofloxacin", "Meropenem", "Ibuprofen",
+        "Fever", "Tachypnea", "Tachycardia", "Dyspnea", "Cough", "Hypotension", "Lactic Acidosis", "Chest X-Ray", "Mechanical Ventilation"
     ]
 
-    def extract_keywords_via_gemini(text: str, category_name: str, max_count: int = 10) -> list:
+    METAGENOMICKG_CANDIDATES = [
+        "Klebsiella pneumoniae", "Klebsiella", "Staphylococcus aureus", "Staphylococcus", "Aureus",
+        "Pseudomonas aeruginosa", "Pseudomonas", "Escherichia coli", "E. coli",
+        "Enterococcus faecalis", "Enterococcus faecium", "Enterococcus",
+        "Streptococcus pneumoniae", "Streptococcus", "Salmonella enterica", "Salmonella",
+        "Acinetobacter baumannii", "Acinetobacter", "Haemophilus influenzae", "Haemophilus",
+        "Clostridioides difficile", "Mycoplasma pneumoniae", "Mycobacterium tuberculosis",
+        "Candida albicans", "Candida", "Aspergillus fumigatus", "Aspergillus"
+    ]
+
+    BVBRC_CANDIDATES = [
+        "SARS-CoV-2", "COVID-19", "Influenza A virus", "Influenza", "Respiratory syncytial virus", "RSV",
+        "BA.5", "JN.1", "BA.2.86", "B.1.617.2", "Delta", "Omicron",
+        "Spike Glycoprotein", "Spike", "3CLpro", "Main Protease", "Nucleocapsid",
+        "ACE2", "P681R", "N501Y", "D614G", "L455S", "L452R", "F486V"
+    ]
+
+    CARD_AMR_CANDIDATES = [
+        "blaKPC", "blaKPC-2", "blaNDM", "blaNDM-1", "blaCTX-M", "blaCTX-M-15",
+        "mecA", "vanA", "vanB", "mcr-1", "gyrA", "parC", "ermB", "tetM",
+        "Carbapenems", "Beta-lactam", "Glycopeptides", "Fluoroquinolones", "Tetracyclines", "Macrolides",
+        "Vancomycin", "Meropenem", "Imipenem", "Piperacillin", "Ciprofloxacin", "Methicillin",
+        "Efflux Pump", "Enzymatic Inactivation", "Target Alteration"
+    ]
+
+    def extract_keywords_via_gemini(text: str, domain_target: str, max_count: int = 10) -> list:
         """
-        使用 Gemini 2.5 動態、開放式地從文本中提取最關鍵的臨床/微生物關鍵字。
+        使用 Gemini 2.5 動態針對指定知識圖譜領域（PrimeKG, MetagenomicKG, BV-BRC, CARD）
+        精準萃取最多 10 個核心臨床/生物資訊關鍵字。
         """
         import json
         import google.generativeai as genai
@@ -1056,29 +1079,55 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: s
         from typing import List
 
         api_key = st.session_state.get("user_gemini_key", GOOGLE_API_KEY)
-        if not api_key:
+        if not api_key or not text.strip():
             return []
+
+        domain_instructions = {
+            "PrimeKG": (
+                "Target Ontology: PrimeKG Precision Medicine Knowledge Graph.\n"
+                "Focus: Extract up to 10 clinical diagnoses/conditions (SNOMED CT/MONDO, e.g., 'Severe Sepsis', 'Pneumonia', 'Diabetes'), "
+                "active prescription medications (RxNorm, e.g., 'Vancomycin', 'Metformin', 'Piperacillin'), and key clinical phenotypes/symptoms (HPO, e.g., 'Fever', 'Lactic Acidosis', 'Dyspnea'). "
+                "STRICT EXCLUSION: Do NOT extract routine normal vitals, common non-specific CBC lab labels (e.g., RBC, WBC count), or administrative text."
+            ),
+            "MetagenomicKG": (
+                "Target Ontology: MetagenomicKG Microbial Pathogen Knowledge Graph.\n"
+                "Focus: Extract up to 10 detected microbial pathogens (bacteria, fungi, parasites, e.g., 'Klebsiella pneumoniae', 'Staphylococcus aureus', 'Pseudomonas aeruginosa') "
+                "from the metagenomic NGS abundance tables and reports. Focus on scientific species/genus names and pathogenic agents."
+            ),
+            "BV-BRC": (
+                "Target Ontology: BV-BRC Viral Genomic & Structural Knowledge Graph.\n"
+                "Focus: Extract up to 10 viral organisms (e.g., 'SARS-CoV-2', 'Influenza'), variant lineages (e.g., 'JN.1', 'BA.5', 'Delta'), "
+                "viral proteins/receptors (e.g., 'Spike Glycoprotein', 'ACE2', 'Main Protease'), or key genomic mutations/SNPs (e.g., 'P681R', 'N501Y', 'D614G') from the consensus genome data."
+            ),
+            "CARD": (
+                "Target Ontology: CARD (Comprehensive Antibiotic Resistance Database) ARO Knowledge Graph.\n"
+                "Focus: Extract up to 10 antimicrobial resistance genes (e.g., 'blaKPC', 'mecA', 'vanA', 'blaCTX-M'), "
+                "associated antibiotic drug classes (e.g., 'Carbapenems', 'Glycopeptides', 'Beta-lactams'), or specific resistance biochemical mechanisms."
+            )
+        }
+
+        specific_instruction = domain_instructions.get(domain_target, "Extract up to 10 specific biological or medical keywords.")
 
         try:
             genai.configure(api_key=api_key)
-            model_flash = genai.GenerativeModel("gemini-2.5-flash") # 快速、廉價且精確
+            model_flash = genai.GenerativeModel("gemini-2.5-flash")
             
             class KeywordList(BaseModel):
-                keywords: List[str] = Field(description=f"List of up to {max_count} clinical, medical, or microbiological keywords")
+                keywords: List[str] = Field(description=f"List of up to {max_count} distinct standard medical or genomic keywords for {domain_target}")
 
             prompt = f"""
-You are an expert clinical NLP keyword extraction tool.
-Analyze the following clinical/microbiological text ({category_name}) and extract the most relevant clinical keywords.
-These can be pathogens (bacteria, viruses, fungi, parasites, e.g., 'Syphilis', 'Streptococcus', 'Varicella-zoster', 'Gonorrhea', 'Hepatitis B', 'Chlamydia'), active infections/diseases/conditions (e.g., 'Cystic fibrosis', 'Sepsis', 'Poisoning', 'Pharyngitis', 'Sinusitis'), medications (e.g., 'Vancomycin', 'Epinephrine', 'Cetirizine'), or major infection/immune procedures (e.g., 'Allergy screening').
+You are an expert biomedical ontology extraction tool specialized in linking raw text to knowledge graph entities.
+Target Knowledge Graph Domain: {domain_target}
 
-Instructions:
-1. Extract at most {max_count} distinct keywords.
-2. Ensure each keyword is a standard English medical/biological term (no dates, no codes, no generic punctuation).
-3. Do not invent keywords; only extract terms that are explicitly mentioned in the text.
-4. Keep the terms concise (e.g., use 'Syphilis', 'Streptococcus', 'Epinephrine', 'Allergy screening').
-5. STRICT CRITICAL CONSTRAINT: DO NOT extract social history (like 'Tobacco smoking', 'Alcohol', 'Occupation'), basic physical measurements/vitals (like 'Body Height', 'Body Weight', 'Blood pressure', 'Heart rate', 'Respiratory rate'), or non-specific common CBC labs (like 'Leukocytes', 'Erythrocytes', 'Hemoglobin', 'Platelets', 'Hematocrit') unless they are explicitly of high-signal diagnostic value for an infection or active pathology. Focus strictly on pathogens, diagnoses, drugs, and relevant immune/infection procedures.
+Instruction Guidelines:
+{specific_instruction}
 
-Text:
+General Rules:
+1. Extract at most {max_count} distinct keywords directly supported by the text.
+2. Ensure each keyword is a concise, standard English biological/medical term (no dates, punctuation, or file formats).
+3. Strictly keep to the specified ontology domain without hallucination.
+
+Text to analyze:
 \"\"\"
 {text[:8000]}
 \"\"\"
@@ -1100,26 +1149,40 @@ Text:
         except Exception:
             return []
 
-    # A. 優先掃描上傳檔案的 CSV 內容 (最多 10 個)
+    # A. 優先掃描上傳檔案的數據 (最多 10 個關鍵字，依模組專屬對應各自圖譜)
     file_terms = []
-    extraction_method = "Gemini Dynamic Extraction (動態開放式智慧萃取)"
     if file_contents:
         file_text = " ".join(str(val) for val in file_contents.values())
-        # 1. 嘗試使用 Gemini 動態提取
-        file_terms = extract_keywords_via_gemini(file_text, "Uploaded Files", 10)
-        
-        # 2. 如果動態提取失敗或返回空，則啟用本地 Heuristic 備用方案
-        if not file_terms:
-            extraction_method = "Local Heuristic Fallback (本地靜態名詞備用方案)"
-            file_text_lower = file_text.lower()
-            for term in candidate_terms:
-                if len(file_terms) >= 10:
-                    break
-                if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text_lower) or term.lower() in file_text_lower:
-                    if term not in file_terms:
-                        file_terms.append(term)
+        if mode == "Metagenomics":
+            # 專屬用 MetagenomicKG 萃取最多 10 個微生物病原體關鍵字
+            file_terms = extract_keywords_via_gemini(file_text, "MetagenomicKG", 10)
+            if not file_terms:
+                file_text_lower = file_text.lower()
+                for term in METAGENOMICKG_CANDIDATES:
+                    if len(file_terms) >= 10: break
+                    if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text_lower) or term.lower() in file_text_lower:
+                        if term not in file_terms: file_terms.append(term)
+        elif mode == "Consensus Genome":
+            # 專屬用 BV-BRC 萃取最多 10 個病毒基因體/變異位點關鍵字
+            file_terms = extract_keywords_via_gemini(file_text, "BV-BRC", 10)
+            if not file_terms:
+                file_text_lower = file_text.lower()
+                for term in BVBRC_CANDIDATES:
+                    if len(file_terms) >= 10: break
+                    if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text_lower) or term.lower() in file_text_lower:
+                        if term not in file_terms: file_terms.append(term)
+        elif mode == "Antimicrobial Resistance":
+            # 專屬用 CARD (ARO) 萃取最多 10 個抗藥基因與耐藥類別關鍵字
+            file_terms = extract_keywords_via_gemini(file_text, "CARD", 10)
+            if not file_terms:
+                file_text_lower = file_text.lower()
+                for term in CARD_AMR_CANDIDATES:
+                    if len(file_terms) >= 10: break
+                    if re.search(r'\b' + re.escape(term.lower()) + r'\b', file_text_lower) or term.lower() in file_text_lower:
+                        if term not in file_terms: file_terms.append(term)
 
-    # B. 接著掃描當前患者的臨床病歷 (FHIR Clinical Records: 疾病診斷, 藥物處方, 醫療處置與手術) (最多 10 個)
+    # B. 當前連接病患臨床資訊 (FHIR Clinical Records: 疾病診斷, 藥物處方, 醫療處置與重大表型)
+    # 專屬萃取最多 10 個關鍵字用 PrimeKG 圖譜連結
     records_terms = []
     if st.session_state.get("active_patient_demographics"):
         p_id = st.session_state.active_patient_demographics.get("id")
@@ -1129,26 +1192,21 @@ Text:
             procedures = get_fhir_patient_procedures(st.session_state.fhir_url, p_id, st.session_state.get("fhir_token"))
             
             clinical_texts = []
-            if conditions:
-                clinical_texts.extend(conditions)
-            if medications:
-                clinical_texts.extend(medications)
-            if procedures:
-                clinical_texts.extend(procedures)
+            if conditions: clinical_texts.extend(conditions)
+            if medications: clinical_texts.extend(medications)
+            if procedures: clinical_texts.extend(procedures)
                 
             clinical_text = " ".join(clinical_texts)
-            # 1. 嘗試使用 Gemini 動態提取
-            records_terms = extract_keywords_via_gemini(clinical_text, "FHIR Clinical Records", 10)
+            # 專屬針對 PrimeKG 進行智慧萃取 (最多 10 個)
+            records_terms = extract_keywords_via_gemini(clinical_text, "PrimeKG", 10)
             
-            # 2. 如果動態提取失敗或返回空，則啟用本地 Heuristic 備用方案
+            # 若動態提取失敗或返回空，啟用 PrimeKG 專屬備用詞庫
             if not records_terms:
                 clinical_text_lower = clinical_text.lower()
-                for term in candidate_terms:
-                    if len(records_terms) >= 10:
-                        break
+                for term in PRIMEKG_PATIENT_CANDIDATES:
+                    if len(records_terms) >= 10: break
                     if re.search(r'\b' + re.escape(term.lower()) + r'\b', clinical_text_lower) or term.lower() in clinical_text_lower:
-                        if term not in records_terms:
-                            records_terms.append(term)
+                        if term not in records_terms: records_terms.append(term)
         except Exception:
             pass
 
