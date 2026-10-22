@@ -1159,15 +1159,21 @@ Text:
         return msg
 
     # ----------------------------------------------------
-    # 知識圖譜檢索 (標準 HTTP REST API + 本地內置引擎備用)
+    # 集中式 Neo4j 知識圖譜檢索 (支援 Live Cypher 與 Streamlit Cloud 雲端沙盒)
     # ----------------------------------------------------
-    from local_kg_service import retrieve_local_kg
-    rest_url = st.session_state.get("kg_rest_api_url", "http://localhost:8088")
-    ret_val = retrieve_local_kg(
+    from neo4j_kg_service import get_default_neo4j_credentials, retrieve_centralized_neo4j_kg
+    def_uri, def_user, def_pwd = get_default_neo4j_credentials()
+    neo4j_uri = st.session_state.get("neo4j_uri", def_uri)
+    neo4j_user = st.session_state.get("neo4j_user", def_user)
+    neo4j_password = st.session_state.get("neo4j_password", def_pwd)
+
+    ret_val = retrieve_centralized_neo4j_kg(
         file_terms=file_terms,
         records_terms=records_terms,
         mode=mode,
-        rest_url=rest_url
+        uri=neo4j_uri,
+        user=neo4j_user,
+        password=neo4j_password
     )
     st.session_state.kg_context_retrieved = ret_val
     return ret_val
@@ -1864,50 +1870,40 @@ def main():
     )
     st.session_state.user_umls_key = user_umls_key
 
-    # ---------- 知識圖譜 REST API 配置 ----------
+    # ---------- Neo4j 集中式知識圖譜配置 (支援本機與 Streamlit Cloud) ----------
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🌐 知識圖譜 REST API (KG REST Service)")
-    kg_api_url_val = st.sidebar.text_input(
-        "KG REST API 端點",
-        value=st.session_state.get("kg_rest_api_url", "http://localhost:8088"),
-        help="輸入知識圖譜 REST API 伺服器網址，預設為本機 http://localhost:8088"
+    st.sidebar.markdown("### 🌐 Neo4j 集中式知識圖譜")
+    
+    from neo4j_kg_service import get_default_neo4j_credentials, test_neo4j_connection
+    def_uri, def_user, def_pwd = get_default_neo4j_credentials()
+    
+    neo4j_uri_val = st.sidebar.text_input(
+        "Neo4j 連線網址 (Bolt / AuraDB)",
+        value=st.session_state.get("neo4j_uri", def_uri),
+        help="輸入 Neo4j 連線 URI。本機測試預設 bolt://localhost:7687；Streamlit Cloud 支援 AuraDB neo4j+s:// 或 st.secrets"
     )
-    st.session_state.kg_rest_api_url = kg_api_url_val
+    neo4j_user_val = st.sidebar.text_input(
+        "Neo4j 帳號",
+        value=st.session_state.get("neo4j_user", def_user)
+    )
+    neo4j_pwd_val = st.sidebar.text_input(
+        "Neo4j 密碼",
+        value=st.session_state.get("neo4j_password", def_pwd),
+        type="password"
+    )
+    st.session_state.neo4j_uri = neo4j_uri_val
+    st.session_state.neo4j_user = neo4j_user_val
+    st.session_state.neo4j_password = neo4j_pwd_val
 
-    from local_kg_service import test_kg_rest_api, get_local_kg
-    if st.sidebar.button("🔍 測試 REST API 連線"):
-        api_res = test_kg_rest_api(kg_api_url_val)
-        if api_res["success"]:
-            st.sidebar.success(f"🟢 {api_res['message']}")
+    if st.sidebar.button("🔍 測試 Neo4j 圖譜連線"):
+        res = test_neo4j_connection(neo4j_uri_val, neo4j_user_val, neo4j_pwd_val)
+        if res["success"]:
+            st.sidebar.success(f"🟢 {res['message']}")
         else:
             st.sidebar.warning(
-                f"🟡 {api_res['message']}\n\n"
-                f"💡 您可執行 `python3 kg_api_server.py` 啟動專屬 REST API 微服務；若未啟動，系統亦會自動以內建本地圖譜引擎進行 GraphRAG 分析。"
+                f"🔌 本地/遠端 Neo4j 伺服器未連線。\n\n"
+                f"系統已自動啟用「雲端沙盒展示模式」以供 Streamlit Cloud 正常演示。"
             )
-
-    local_kg = get_local_kg()
-    kg_stats = local_kg.stats
-
-    st.sidebar.markdown(f"""
-    <div style="background-color:#f0f9ff; padding:10px 14px; border-radius:10px; border-left:5px solid #0284c7; font-size:13px; color:#0369a1; margin-bottom:12px; line-height:1.6;">
-        📡 <b>服務協議</b>: HTTP REST API (`/api/kg/query`)<br>
-        📊 <b>圖譜規模</b>: {kg_stats['node_count']} 個臨床核心節點 | {kg_stats['relationship_count']} 條多跳關係邊<br>
-        🧬 <b>整合體系</b>: PrimeKG + MetagenomicKG + CARD + BV-BRC
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.sidebar.expander("🔍 REST API / 圖譜即時查詢測試", expanded=False):
-        kg_test_query = st.text_input("輸入醫學關鍵字", value="Metformin", key="kg_test_input")
-        if st.button("檢索知識圖譜", key="btn_test_kg"):
-            matched_res = []
-            matched_res.extend(local_kg.query_primekg(kg_test_query))
-            matched_res.extend(local_kg.query_metagenomics(kg_test_query))
-            matched_res.extend(local_kg.query_amr_card(kg_test_query))
-            matched_res.extend(local_kg.query_consensus_genome(kg_test_query))
-            if matched_res:
-                st.markdown("\n".join(matched_res))
-            else:
-                st.info(f"知識圖譜查無「{kg_test_query}」對應實體。")
 
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
     if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics:
