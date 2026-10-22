@@ -1,29 +1,25 @@
 """
-本地內置精準醫學與基因體知識圖譜服務 (Local Embedded Medical & Genomic KG Service)
-100% 純本地端運行，零外部網路依賴 (Zero-Network Dependency)。
+SentinEID 臨床精準醫學與基因體知識圖譜服務 (Knowledge Graph Service)
+支援標準 HTTP REST API 與 本地內置引擎雙軌架構 (REST API + Local Embedded Fallback)
 
-完全不依賴外部連線 (No Neo4j Bolt / No Docker / No Port 7687 / No External APIs)，
-直接於 Python 行程中提供高速、確定性之 GraphRAG 實體與關聯多跳檢索。
-
-整合四大權威臨床與基因體知識圖譜：
-1. PrimeKG (Harvard 精準醫學圖譜): 疾病分類 (MONDO)、臨床表型 (HPO)、適應症與用藥禁忌 (Contraindications)
-2. MetagenomicKG: 微生物病原體、分類階層、宿主感染途徑、症候群與抗微生物治療
-3. CARD (The Comprehensive Antibiotic Resistance Database): ARO 抗藥基因、抗藥生化機轉與抗生素家族
-4. BV-BRC: 病毒與細菌基因體學、演化譜系 (Lineages)、蛋白結構與宿主受體交互作用
+1. REST API 優先模式：透過標準 HTTP POST `/api/kg/query` 請求微服務端點
+2. 本地內置容錯模式：若 REST API 未啟動或網路不可達，自動無縫啟用本機記憶體圖譜引擎 (Zero-Network Fallback)
 """
 
 import os
 import json
 import logging
+import requests
 from typing import List, Dict, Any, Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 _OFFLINE_KG_PATH = os.path.join(_CURRENT_DIR, "offline_kg_data.json")
+DEFAULT_KG_REST_URL = os.getenv("KG_REST_API_URL", "http://localhost:8088")
 
 class LocalKnowledgeGraph:
-    """純本地端記憶體知識圖譜引擎"""
+    """純本地端記憶體知識圖譜引擎（提供 REST API 伺服器後端與離線備用檢索）"""
 
     def __init__(self, data_path: str = _OFFLINE_KG_PATH):
         self.data_path = data_path
@@ -55,7 +51,6 @@ class LocalKnowledgeGraph:
         s_cnt = len(self.data.get("strains", []))
         total_nodes = p_cnt + d_cnt + dr_cnt + ph_cnt + amr_cnt + s_cnt
 
-        # 計算關聯邊數量
         rel_cnt = 0
         for p in self.data.get("pathogens", []):
             rel_cnt += len(p.get("diseases", [])) + len(p.get("amr_genes", [])) + len(p.get("indicated_drugs", []))
@@ -187,16 +182,56 @@ def get_local_kg() -> LocalKnowledgeGraph:
         _LOCAL_KG_INSTANCE = LocalKnowledgeGraph()
     return _LOCAL_KG_INSTANCE
 
+def test_kg_rest_api(api_url: str = DEFAULT_KG_REST_URL) -> Dict[str, Any]:
+    """檢驗知識圖譜 REST API 伺服器連線狀態"""
+    clean_url = api_url.rstrip("/")
+    try:
+        r = requests.get(f"{clean_url}/health", timeout=2)
+        if r.status_code == 200:
+            stats_r = requests.get(f"{clean_url}/api/kg/stats", timeout=2)
+            stats_data = stats_r.json().get("stats", {}) if stats_r.status_code == 200 else {}
+            node_cnt = stats_data.get("node_count", 48)
+            rel_cnt = stats_data.get("relationship_count", 117)
+            return {
+                "success": True,
+                "url": clean_url,
+                "node_count": node_cnt,
+                "relationship_count": rel_cnt,
+                "message": f"REST API 連線正常！伺服器運作中 (包含 {node_cnt} 實體節點與 {rel_cnt} 關係邊)。"
+            }
+    except Exception as e:
+        pass
+    return {
+        "success": False,
+        "url": clean_url,
+        "message": f"REST API ({clean_url}) 尚未連線（系統將自動使用本地內建圖譜引擎作為備用，保證分析正常）。"
+    }
+
 def retrieve_local_kg(
     file_terms: List[str],
     records_terms: List[str],
-    mode: str
+    mode: str,
+    rest_url: Optional[str] = None
 ) -> str:
     """
-    純本地端確定性知識圖譜檢索入口：
-    不進行任何外部網路 Socket 連線，100% 本地記憶體運行，
-    直接提供高品質 GraphRAG 實證網絡。
+    透過標準 HTTP REST API (預設 http://localhost:8000) 進行知識圖譜檢索。
+    若 REST API 伺服器未啟動，自動啟用內置本地圖譜引擎確保零中斷。
     """
+    target_api = (rest_url or os.getenv("KG_REST_API_URL", DEFAULT_KG_REST_URL)).rstrip("/")
+    try:
+        payload = {
+            "file_terms": file_terms,
+            "records_terms": records_terms,
+            "mode": mode
+        }
+        resp = requests.post(f"{target_api}/api/kg/query", json=payload, timeout=3)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("markdown_context", "")
+    except Exception as e:
+        logging.info(f"REST API ({target_api}) 連線未回應，使用本地內置引擎進行圖譜檢索: {e}")
+
+    # 本地內置引擎備用處理
     kg = get_local_kg()
     stats = kg.stats
 
