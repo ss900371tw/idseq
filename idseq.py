@@ -1159,13 +1159,15 @@ Text:
         return msg
 
     # ----------------------------------------------------
-    # 本地內置精準醫學知識圖譜檢索 (純本地端方案，零外部網路依賴)
+    # 知識圖譜檢索 (標準 HTTP REST API + 本地內置引擎備用)
     # ----------------------------------------------------
     from local_kg_service import retrieve_local_kg
+    rest_url = st.session_state.get("kg_rest_api_url", "http://localhost:8088")
     ret_val = retrieve_local_kg(
         file_terms=file_terms,
         records_terms=records_terms,
-        mode=mode
+        mode=mode,
+        rest_url=rest_url
     )
     st.session_state.kg_context_retrieved = ret_val
     return ret_val
@@ -1862,24 +1864,41 @@ def main():
     )
     st.session_state.user_umls_key = user_umls_key
 
-    # ---------- 本地內置精準醫學知識圖譜配置 ----------
+    # ---------- 知識圖譜 REST API 配置 ----------
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🌐 本地內置知識圖譜 (Local Embedded KG)")
-    from local_kg_service import get_local_kg
+    st.sidebar.markdown("### 🌐 知識圖譜 REST API (KG REST Service)")
+    kg_api_url_val = st.sidebar.text_input(
+        "KG REST API 端點",
+        value=st.session_state.get("kg_rest_api_url", "http://localhost:8088"),
+        help="輸入知識圖譜 REST API 伺服器網址，預設為本機 http://localhost:8088"
+    )
+    st.session_state.kg_rest_api_url = kg_api_url_val
+
+    from local_kg_service import test_kg_rest_api, get_local_kg
+    if st.sidebar.button("🔍 測試 REST API 連線"):
+        api_res = test_kg_rest_api(kg_api_url_val)
+        if api_res["success"]:
+            st.sidebar.success(f"🟢 {api_res['message']}")
+        else:
+            st.sidebar.warning(
+                f"🟡 {api_res['message']}\n\n"
+                f"💡 您可執行 `python3 kg_api_server.py` 啟動專屬 REST API 微服務；若未啟動，系統亦會自動以內建本地圖譜引擎進行 GraphRAG 分析。"
+            )
+
     local_kg = get_local_kg()
     kg_stats = local_kg.stats
 
     st.sidebar.markdown(f"""
-    <div style="background-color:#f0f9ff; padding:12px 14px; border-radius:10px; border-left:5px solid #0284c7; font-size:13px; color:#0369a1; margin-bottom:12px; line-height:1.6;">
-        🟢 <b>運作狀態</b>: 本地純端引擎 (Zero-Network)<br>
+    <div style="background-color:#f0f9ff; padding:10px 14px; border-radius:10px; border-left:5px solid #0284c7; font-size:13px; color:#0369a1; margin-bottom:12px; line-height:1.6;">
+        📡 <b>服務協議</b>: HTTP REST API (`/api/kg/query`)<br>
         📊 <b>圖譜規模</b>: {kg_stats['node_count']} 個臨床核心節點 | {kg_stats['relationship_count']} 條多跳關係邊<br>
         🧬 <b>整合體系</b>: PrimeKG + MetagenomicKG + CARD + BV-BRC
     </div>
     """, unsafe_allow_html=True)
 
-    with st.sidebar.expander("🔍 本地圖譜即時查詢測試", expanded=False):
+    with st.sidebar.expander("🔍 REST API / 圖譜即時查詢測試", expanded=False):
         kg_test_query = st.text_input("輸入醫學關鍵字", value="Metformin", key="kg_test_input")
-        if st.button("檢索本地知識圖譜", key="btn_test_kg"):
+        if st.button("檢索知識圖譜", key="btn_test_kg"):
             matched_res = []
             matched_res.extend(local_kg.query_primekg(kg_test_query))
             matched_res.extend(local_kg.query_metagenomics(kg_test_query))
@@ -1888,7 +1907,7 @@ def main():
             if matched_res:
                 st.markdown("\n".join(matched_res))
             else:
-                st.info(f"本地圖譜查無「{kg_test_query}」對應實體。")
+                st.info(f"知識圖譜查無「{kg_test_query}」對應實體。")
 
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
     if analysis_scope == "「單一病患」病程/部位追蹤" and st.session_state.active_patient_demographics:
