@@ -14,7 +14,7 @@ import os
 import json
 import argparse
 import logging
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, exceptions
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -22,17 +22,70 @@ _CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 _JSON_PATH = os.path.join(_CURRENT_DIR, "offline_kg_data.json")
 
 def sync_data(uri: str, user: str, password: str):
-    logging.info(f"正在連線至目標 Neo4j 資料庫: {uri} (使用者: {user}) ...")
+    import urllib.parse
+    import socket
+
+    clean_uri = uri.strip()
+    logging.info(f"正在連線至目標 Neo4j 資料庫: {clean_uri} (使用者: {user}) ...")
     
     if not os.path.exists(_JSON_PATH):
         logging.error(f"找不到圖譜資料檔案: {_JSON_PATH}")
         return False
-        
+
+    # 先行檢驗 DNS 主機名稱解析
+    parsed = urllib.parse.urlparse(clean_uri)
+    host = parsed.hostname or clean_uri.split("//")[-1].split(":")[0].split("/")[0]
+    if host and host not in ["localhost", "127.0.0.1"]:
+        try:
+            ip = socket.gethostbyname(host)
+            logging.info(f"✅ DNS 解析成功: {host} -> {ip}")
+        except socket.gaierror:
+            logging.error(f"❌ DNS 解析失敗: 找不到主機名稱「{host}」")
+            print("\n" + "="*70)
+            print("💡 【Neo4j AuraDB DNS 解析失敗常見原因與處置】：")
+            print("="*70)
+            print("1. ⏳【實例尚在初始化 (Creating)】：")
+            print("   剛在 Neo4j Aura Console 點擊建立實例時，通常需要 2～5 分鐘 進行雲端配置。")
+            print("   在此期間 DNS 尚未生效，請至 https://console.neo4j.io/ 查看狀態。")
+            print("   等到實例狀態由藍色「Creating...」轉為 綠色「Running」 後，DNS 即會生效！")
+            print("")
+            print("2. ⏸️【實例處於暫停狀態 (Paused)】：")
+            print("   免費版 AuraDB 若一段時間未存取會自動暫停，請至 Console 點選「Resume」啟動。")
+            print("")
+            print("3. 📋【URI 網址複製確認】：")
+            print("   請確認複製的 Connection URI 是否與 Console 實例卡片上完全一致（例如 neo4j+s://...）。")
+            print("="*70 + "\n")
+            return False
+
     with open(_JSON_PATH, "r", encoding="utf-8") as f:
         kg_data = json.load(f)
 
-    driver = GraphDatabase.driver(uri, auth=(user, password))
-    
+    # 驗證驅動與認證有效性
+    try:
+        driver = GraphDatabase.driver(clean_uri, auth=(user, password))
+        with driver.session() as test_session:
+            test_session.run("RETURN 1").single()
+        logging.info("✅ 帳號與密碼認證成功！開始同步資料庫...")
+    except exceptions.AuthError:
+        logging.error("❌ 帳號密碼認證失敗 (AuthError / Unauthorized)！")
+        print("\n" + "="*70)
+        print("💡 【Neo4j AuraDB 認證失敗排查步驟】：")
+        print("="*70)
+        print("1. 👤 【確認使用者名稱】：預設必須為 neo4j")
+        print("2. 🔑 【密碼更新確認】：")
+        print("   在 Neo4j Aura 控制台點擊「Recover Database Credentials」後，")
+        print("   彈窗中顯示的『密碼』是即時生成的全新密碼，請確保複製並貼上的是最新的密碼。")
+        print("3. 🛡️ 【特殊字元轉義保護】：")
+        print("   若密碼中包含特殊符號（如 $, !, &, *），在終端機中請務必用單引號包覆：")
+        print("   python3 sync_to_remote_neo4j.py --uri ... --password '您的新密碼'")
+        print("   或者直接執行不帶密碼參數，由系統安全提示輸入：")
+        print("   python3 sync_to_remote_neo4j.py --uri neo4j+s://0b7cabfa.databases.neo4j.io")
+        print("="*70 + "\n")
+        return False
+    except Exception as e:
+        logging.error(f"連線失敗: {e}")
+        return False
+
     with driver.session() as session:
         # 1. 建立唯一性約束與索引
         logging.info("1. 建立唯一性約束與檢索索引...")
@@ -107,9 +160,22 @@ def sync_data(uri: str, user: str, password: str):
                 gene.aliases = $aliases
             """, id=g["id"], name=g["name"], drug_class=g.get("drug_class", ""),
                  clinical_sig=g.get("clinical_sig", ""), aliases=g.get("aliases", []))
+            
+            # 建立 AMRMechanism 節點與關聯
+            for mech_str in g.get("mechanisms", []):
+                mech_name = mech_str.split(":")[0].strip()
+                mech_desc = mech_str.split(":", 1)[1].strip() if ":" in mech_str else mech_str
+                session.run("""
+                MERGE (m:AMRMechanism {name: $mname})
+                SET m.description = $mdesc
+                """, mname=mech_name, mdesc=mech_desc)
+                session.run("""
+                MATCH (gene:AMRGene {id: $gid}), (m:AMRMechanism {name: $mname})
+                MERGE (gene)-[:HAS_MECHANISM]->(m)
+                """, gid=g["id"], mname=mech_name)
 
-        # 7. 匯入 Strain (BV-BRC)
-        logging.info("7. 匯入 BV-BRC 病毒與細菌基因組實體節點...")
+        # 7. 匯入 Strain (BV-BRC) 以及關聯子節點 (Lineage, Protein, HostReceptor, Mutation)
+        logging.info("7. 匯入 BV-BRC 病毒與細菌基因組實體節點與子結構...")
         for s in kg_data.get("strains", []):
             session.run("""
             MERGE (strain:Strain {id: $id})
@@ -119,6 +185,53 @@ def sync_data(uri: str, user: str, password: str):
                 strain.description = $desc
             """, id=s["id"], name=s["name"], scientific_name=s.get("scientific_name", ""),
                  genome_type=s.get("genome_type", ""), desc=s.get("desc", ""))
+
+            # Lineages
+            for lin_str in s.get("lineages", []):
+                lin_name = lin_str.split(" (")[0].strip()
+                lin_desc = lin_str.split(" (", 1)[1].rstrip(")") if " (" in lin_str else ""
+                session.run("""
+                MERGE (l:Lineage {name: $lname})
+                SET l.description = $ldesc
+                WITH l
+                MATCH (strain:Strain {id: $sid})
+                MERGE (strain)-[:HAS_LINEAGE]->(l)
+                """, lname=lin_name, ldesc=lin_desc, sid=s["id"])
+
+            # Proteins
+            for prot_str in s.get("proteins", []):
+                p_name = prot_str.split(" [")[0].strip()
+                session.run("""
+                MERGE (p:Protein {name: $pname})
+                SET p.gene_symbol = 'S', p.pdb_id = '7DK3'
+                WITH p
+                MATCH (strain:Strain {id: $sid})
+                MERGE (strain)-[:EXPRESSES_PROTEIN]->(p)
+                """, pname=p_name, sid=s["id"])
+
+            # HostReceptors
+            for rec_str in s.get("receptors", []):
+                r_name = rec_str.split(" (")[0].strip()
+                r_loc = rec_str.split(" (", 1)[1].rstrip(")") if " (" in rec_str else ""
+                session.run("""
+                MERGE (r:HostReceptor {name: $rname})
+                SET r.cellular_location = $rloc
+                WITH r
+                MATCH (p:Protein)
+                MERGE (p)-[:BINDS_TO]->(r)
+                """, rname=r_name, rloc=r_loc)
+
+            # Mutations
+            for mut_str in s.get("mutations", []):
+                m_name = mut_str.split(":")[0].strip()
+                m_impact = mut_str.split(":", 1)[1].strip() if ":" in mut_str else ""
+                session.run("""
+                MERGE (mut:Mutation {name: $mname})
+                SET mut.biological_impact = $mimpact
+                WITH mut
+                MATCH (p:Protein)
+                MERGE (p)-[:HAS_MUTATION]->(mut)
+                """, mname=m_name, mimpact=m_impact)
 
         # 8. 建立實體關聯邊 (Relationships)
         logging.info("8. 建立多跳臨床關聯邊 (CAUSES, INDICATED_FOR, CONTRAINDICATED_FOR, HAS_PHENOTYPE)...")
@@ -196,10 +309,15 @@ def sync_data(uri: str, user: str, password: str):
         return True
 
 if __name__ == "__main__":
+    import getpass
     parser = argparse.ArgumentParser(description="同步知識圖譜至 Neo4j AuraDB 或遠端資料庫")
     parser.add_argument("--uri", default="bolt://localhost:7687", help="Neo4j 連線 URI (例如 neo4j+s://xxxx.databases.neo4j.io)")
-    parser.add_argument("--user", default="neo4j", help="Neo4j 使用者帳號")
-    parser.add_argument("--password", default="idseqneo4j", help="Neo4j 使用者密碼")
+    parser.add_argument("--user", default="neo4j", help="Neo4j 使用者帳號 (預設: neo4j)")
+    parser.add_argument("--password", default="", help="Neo4j 使用者密碼 (若未提供，將以隱藏輸入方式安全提示)")
     args = parser.parse_args()
 
-    sync_data(args.uri, args.user, args.password)
+    pwd = args.password
+    if not pwd:
+        pwd = getpass.getpass(f"請輸入 Neo4j 密碼 ({args.user}@{args.uri}): ")
+
+    sync_data(args.uri, args.user, pwd)

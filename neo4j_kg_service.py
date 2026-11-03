@@ -22,21 +22,40 @@ _OFFLINE_KG_PATH = os.path.join(_CURRENT_DIR, "offline_kg_data.json")
 
 def get_default_neo4j_credentials():
     """
-    依序自 Streamlit Secrets (st.secrets)、環境變數與預設值讀取 Neo4j 連線資訊，
+    依序自 .streamlit/secrets.toml、Streamlit Secrets (st.secrets)、環境變數與預設值讀取 Neo4j 連線資訊，
     完美支援 Streamlit Cloud (AuraDB neo4j+s://) 與本機 Docker (bolt://localhost:7687)。
     """
     uri = "bolt://localhost:7687"
     user = "neo4j"
     password = "idseqneo4j"
+
+    # 1. 優先嘗試直接解析 .streamlit/secrets.toml 檔案
+    secrets_path = os.path.join(_CURRENT_DIR, ".streamlit", "secrets.toml")
+    if os.path.exists(secrets_path):
+        try:
+            with open(secrets_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    clean_line = line.strip()
+                    if clean_line.startswith("NEO4J_URI"):
+                        uri = clean_line.split("=", 1)[1].strip().strip('"').strip("'")
+                    elif clean_line.startswith("NEO4J_USER"):
+                        user = clean_line.split("=", 1)[1].strip().strip('"').strip("'")
+                    elif clean_line.startswith("NEO4J_PASSWORD"):
+                        password = clean_line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+
+    # 2. 嘗試自 Streamlit runtime secrets 讀取 (Streamlit Cloud 部署)
     try:
         import streamlit as st
-        if hasattr(st, "secrets"):
+        if hasattr(st, "secrets") and "NEO4J_URI" in st.secrets:
             uri = st.secrets.get("NEO4J_URI", uri)
             user = st.secrets.get("NEO4J_USER", user)
             password = st.secrets.get("NEO4J_PASSWORD", password)
     except Exception:
         pass
 
+    # 3. 嘗試自系統環境變數讀取
     uri = os.getenv("NEO4J_URI", uri)
     user = os.getenv("NEO4J_USER", user)
     password = os.getenv("NEO4J_PASSWORD", password)
@@ -54,7 +73,8 @@ def test_neo4j_connection(uri: str, user: str, password: str) -> Dict[str, Any]:
         driver = GraphDatabase.driver(uri, auth=(user, password), connection_timeout=4)
         with driver.session() as session:
             version_res = session.run("CALL dbms.components() YIELD name, versions, edition RETURN name, versions[0] AS version, edition")
-            comp = version_res.single()
+            comp_list = list(version_res)
+            comp = comp_list[0] if comp_list else {"name": "Neo4j", "version": "5.x", "edition": "aura"}
             node_cnt = session.run("MATCH (n) RETURN count(n) AS cnt").single()["cnt"]
             rel_cnt = session.run("MATCH ()-[r]->() RETURN count(r) AS cnt").single()["cnt"]
             driver.close()
@@ -94,7 +114,6 @@ def query_metagenomics_kg(session, term: str) -> List[str]:
            collect(DISTINCT d.name) AS diseases,
            collect(DISTINCT gene.name) AS amr_genes,
            collect(DISTINCT dr.name) AS indicated_drugs
-    LIMIT 3
     """
     result = session.run(cypher, term=term)
     for rec in result:
@@ -130,7 +149,6 @@ def query_amr_card_kg(session, term: str) -> List[str]:
            collect(DISTINCT m.name + ': ' + m.description) AS mechanisms,
            collect(DISTINCT dr.name) AS resistant_drugs,
            collect(DISTINCT p.name) AS host_bacteria
-    LIMIT 3
     """
     result = session.run(cypher, term=term)
     for rec in result:
@@ -167,7 +185,6 @@ def query_consensus_genome_kg(session, term: str) -> List[str]:
            collect(DISTINCT p.name + ' [' + p.gene_symbol + ', PDB:' + p.pdb_id + ']') AS proteins,
            collect(DISTINCT r.name + ' (' + r.cellular_location + ')') AS receptors,
            collect(DISTINCT mut.name + ': ' + mut.biological_impact) AS mutations
-    LIMIT 3
     """
     result = session.run(cypher, term=term)
     for rec in result:
@@ -217,7 +234,6 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
            collect(DISTINCT dr.name) AS indicated_drugs,
            collect(DISTINCT bad_dr.name + ' (禁忌原因: ' + contra.clinical_rationale + ')') AS contraindications,
            collect(DISTINCT p.name) AS causative_pathogens
-    LIMIT 3
     """
     res_dis = list(session.run(cypher_disease, term=clean_term))
     for rec in res_dis:
@@ -258,7 +274,6 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
            collect(DISTINCT bad_d.name + ' (禁忌原因: ' + contra.clinical_rationale + ')') AS contraindications,
            collect(DISTINCT ph.name) AS treats_phenotypes,
            collect(DISTINCT g.name) AS resistant_genes
-    LIMIT 3
     """
     res_drug = list(session.run(cypher_drug, term=clean_term))
     for rec in res_drug:
@@ -293,7 +308,6 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
            ph.description AS desc,
            collect(DISTINCT d.name) AS associated_diseases,
            collect(DISTINCT dr.name) AS symptomatic_drugs
-    LIMIT 3
     """
     res_ph = list(session.run(cypher_phenotype, term=clean_term))
     for rec in res_ph:
@@ -342,19 +356,33 @@ def retrieve_cloud_sandbox_kg(file_terms: List[str], records_terms: List[str], m
     自動無縫啟用沙盒展示圖譜，確保 100% 演示可用且不跳出 Connection Refused 報錯。
     """
     data = _load_cloud_sandbox_data()
+    mode_graph_map = {
+        "Metagenomics": "MetagenomicKG (宏基因組微生物病原體分類與感染症候群)",
+        "Consensus Genome": "BV-BRC (病毒共識基因組變異譜系、蛋白結構與受體)",
+        "Antimicrobial Resistance": "CARD ARO (抗藥性基因與生化耐藥機制)"
+    }
+    target_file_kg = mode_graph_map.get(mode, "特定領域專屬圖譜")
+
     sections = [
         "🌐 **[Neo4j 集中式知識圖譜檢索 (Streamlit Cloud 沙盒展示模式)]**",
         f"• 運作說明: 當前處於雲端展示模式 (未偵測到本地/遠端 Neo4j 實例 `{uri}`)，系統已自動啟用內置 Neo4j 沙盒實證圖譜，保障完整臨床 GraphRAG 分析機能。",
         f"• 圖譜規模: 48 個核心臨床實體節點 | 117 條多跳關係邊",
-        f"• 整合體系: PrimeKG (精準醫學) + MetagenomicKG (宏基因組) + CARD (抗藥性) + BV-BRC (病毒基因組)",
-        f"• 查詢分析主題 (Mode): `{mode}`",
+        f"• 當前分析模組 (Mode): `{mode}`",
+        f"• 上傳檔案專屬圖譜: {target_file_kg}",
+        f"• 病患臨床專屬圖譜: PrimeKG (精準醫學: 疾病分類、處方用藥禁忌與臨床表型)",
         f"• 上傳檔案實體 (File Entities): {', '.join(file_terms) if file_terms else '無'}",
         f"• 病患臨床病歷實體 (Patient Entities): {', '.join(records_terms) if records_terms else '無'}\n"
     ]
 
     # 1. 檔案實體
     if file_terms:
-        sections.append(f"### 🧬 上傳檔案生物體與基因組圖譜實體檢索 (Mode: {mode})")
+        if mode == "Metagenomics":
+            sections.append("### 🧫 宏基因組微生物病原實證網絡 (MetagenomicKG Context)")
+        elif mode == "Consensus Genome":
+            sections.append("### 🧬 病毒共識基因組演化、突變與受體實證網絡 (BV-BRC Genomic Context)")
+        elif mode == "Antimicrobial Resistance":
+            sections.append("### 🛡️ 抗藥性基因與耐藥機制實證網絡 (CARD ARO Resistance Context)")
+
         for term in file_terms:
             matched_lines = []
             if mode == "Metagenomics":
@@ -391,7 +419,7 @@ def retrieve_cloud_sandbox_kg(file_terms: List[str], records_terms: List[str], m
 
     # 2. 病患臨床病歷 (PrimeKG)
     if records_terms:
-        sections.append("### 📋 病患臨床病歷精準醫學網絡檢索 (PrimeKG Clinical Context)")
+        sections.append("### 📋 當前連接病患臨床病歷精準醫學網絡 (PrimeKG Precision Medicine Context)")
         for term in records_terms:
             clinical_lines = []
             for d in data.get("diseases", []):
@@ -466,40 +494,34 @@ def retrieve_centralized_neo4j_kg(
     try:
         driver = GraphDatabase.driver(uri, auth=(user, password), connection_timeout=4)
         with driver.session() as session:
-            # 1. 針對上傳檔案中的生物資訊/基因體實體檢索
+            # 1. 針對上傳檔案中的實體：嚴格依據分析模組 (Mode) 路由至專屬圖譜
             if file_terms:
-                sections.append(f"### 🧬 上傳檔案生物體與基因組圖譜實體檢索 (Mode: {mode})")
-                for term in file_terms:
-                    matched_lines = []
-                    if mode == "Metagenomics":
-                        matched_lines = query_metagenomics_kg(session, term)
-                    elif mode == "Consensus Genome":
-                        matched_lines = query_consensus_genome_kg(session, term)
-                        if not matched_lines:
-                            matched_lines = query_metagenomics_kg(session, term)
-                    elif mode == "Antimicrobial Resistance":
-                        matched_lines = query_amr_card_kg(session, term)
-                        if not matched_lines:
-                            matched_lines = query_metagenomics_kg(session, term)
-                    
-                    if matched_lines:
-                        sections.extend(matched_lines)
-                    else:
-                        general_lines = query_metagenomics_kg(session, term) or query_amr_card_kg(session, term)
-                        if general_lines:
-                            sections.extend(general_lines)
+                if mode == "Metagenomics":
+                    sections.append("### 🧫 宏基因組微生物病原實證網絡 (MetagenomicKG Context)")
+                    for term in file_terms:
+                        lines = query_metagenomics_kg(session, term)
+                        if lines:
+                            sections.extend(lines)
+                elif mode == "Consensus Genome":
+                    sections.append("### 🧬 病毒共識基因組演化、突變與受體實證網絡 (BV-BRC Genomic Context)")
+                    for term in file_terms:
+                        lines = query_consensus_genome_kg(session, term)
+                        if lines:
+                            sections.extend(lines)
+                elif mode == "Antimicrobial Resistance":
+                    sections.append("### 🛡️ 抗藥性基因與耐藥機制實證網絡 (CARD ARO Resistance Context)")
+                    for term in file_terms:
+                        lines = query_amr_card_kg(session, term)
+                        if lines:
+                            sections.extend(lines)
 
-            # 2. 針對病患臨床病歷 (FHIR Clinical Records) 進行 PrimeKG 與對應網絡檢索
+            # 2. 針對當前連接病患臨床病歷 (FHIR Clinical Records)：一律且僅專屬對應 PrimeKG
             if records_terms:
-                sections.append("### 📋 病患臨床病歷精準醫學網絡檢索 (PrimeKG Clinical Context)")
+                sections.append("### 📋 當前連接病患臨床病歷精準醫學網絡 (PrimeKG Precision Medicine Context)")
                 for term in records_terms:
                     clinical_lines = query_primekg_clinical_kg(session, term)
                     if clinical_lines:
                         sections.extend(clinical_lines)
-                    else:
-                        alt_lines = query_amr_card_kg(session, term) or query_metagenomics_kg(session, term)
-                        if alt_lines:
-                            sections.extend(alt_lines)
 
         driver.close()
     except Exception as e:
