@@ -473,9 +473,26 @@ def upload_report_to_fhir(server_url, patient_id, report_markdown, report_title,
             
         encoded_data = base64.b64encode(report_markdown.encode("utf-8")).decode("utf-8")
         
+        now_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         doc_ref = {
             "resourceType": "DocumentReference",
+            "meta": {
+                "profile": [
+                    "http://hl7.org/fhir/us/core/StructureDefinition/us-core-documentreference"
+                ]
+            },
             "status": "current",
+            "category": [
+                {
+                    "coding": [
+                        {
+                            "system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                            "code": "clinical-note",
+                            "display": "Clinical Note"
+                        }
+                    ]
+                }
+            ],
             "type": {
                 "coding": [
                     {
@@ -489,7 +506,7 @@ def upload_report_to_fhir(server_url, patient_id, report_markdown, report_title,
             "subject": {
                 "reference": f"Patient/{patient_id}"
             },
-            "date": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "date": now_str,
             "content": [
                 {
                     "attachment": {
@@ -579,14 +596,18 @@ def validate_and_correct_fhir_bundle(fhir_bundle, umls_api_key):
         resource = entry.get("resource", {})
         res_type = resource.get("resourceType")
         
-        # 針對沒有 code 欄位的特殊資源（如 DiagnosticReport 等），可依需求保留或檢查
+        # 針對特殊報告結構資源（如 DiagnosticReport、DocumentReference），直接信任並保留
+        if res_type in ["DiagnosticReport", "DocumentReference"]:
+            valid_entries.append(entry)
+            continue
+            
         concepts_to_check = []
         if "code" in resource and isinstance(resource["code"], dict):
             concepts_to_check.append((resource["code"], res_type))
         if "medicationCodeableConcept" in resource and isinstance(resource["medicationCodeableConcept"], dict):
             concepts_to_check.append((resource["medicationCodeableConcept"], "MedicationRequest"))
 
-        # 若該資源本身沒有臨床代碼欄位（例如純結構報告），預設予以保留
+        # 若該資源本身沒有臨床代碼欄位，預設予以保留
         if not concepts_to_check:
             valid_entries.append(entry)
             continue
@@ -835,29 +856,7 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
         
         standard_entries = []
         now_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        
-        # 建立 DiagnosticReport（僅摘要關鍵結論，不全文照放）
-        diag_report = {
-            "resourceType": "DiagnosticReport",
-            "id": f"dr-{uuid4().hex[:8]}",
-            "status": "final",
-            "code": {
-                "coding": [
-                    {
-                        "system": "http://loinc.org",
-                        "code": "96381-9",
-                        "display": "Metagenomic next-generation sequencing analysis"
-                    }
-                ],
-                "text": "Structured Genomic Analysis Report"
-            },
-            "subject": {
-                "reference": f"Patient/{patient_id}"
-            },
-            "issued": now_str,
-            "conclusion": f"Metagenomic NGS clinical analysis processed via SMART Text2FHIR (Key Entities Extracted)."
-        }
-        standard_entries.append({"resource": diag_report, "request": {"method": "POST", "url": "DiagnosticReport"}})
+        obs_references = []
         
         allowed_systems = {
             "http://snomed.info/sct",
@@ -867,10 +866,14 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
         
         for res in resources:
             res_dict = res.as_json()
-            if res_dict.get("resourceType") == "MedicationStatement":
+            res_id = res_dict.get("id") or str(uuid4())
+            res_dict["id"] = res_id
+            res_type = res_dict.get("resourceType")
+
+            # 依據 Synthea US Core FHIR 規範標準化資源類型
+            if res_type == "MedicationStatement":
+                res_type = "MedicationRequest"
                 res_dict["resourceType"] = "MedicationRequest"
-                res_dict["intent"] = "order"
-                res_dict["status"] = "active"
                 
             if "subject" in res_dict and isinstance(res_dict["subject"], dict):
                 res_dict["subject"]["reference"] = f"Patient/{patient_id}"
@@ -899,18 +902,184 @@ Extract all clinical entities and populate the FlatCtakesInput schema:
                     cleaned_codings.append(fallback)
                 cc_dict["coding"] = cleaned_codings
 
-            res_type = res_dict.get("resourceType")
-            if res_type == "Condition" and "code" in res_dict:
-                clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
-            elif res_type == "MedicationRequest" and "medicationCodeableConcept" in res_dict:
-                clean_codeable_concept(res_dict["medicationCodeableConcept"], "http://www.nlm.nih.gov/research/umls/rxnorm")
-            elif res_type == "Observation" and "code" in res_dict:
-                clean_codeable_concept(res_dict["code"], "http://loinc.org")
-            elif res_type == "Procedure" and "code" in res_dict:
-                clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
-                
-            standard_entries.append({"resource": res_dict, "request": {"method": "POST", "url": res_dict["resourceType"]}})
-            
+            # 遵循 Synthea FHIR 格式設定 US Core Profiles 與臨床分類
+            if res_type == "Condition":
+                res_dict["meta"] = {
+                    "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-condition-encounter-diagnosis"]
+                }
+                res_dict["clinicalStatus"] = {
+                    "coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active"}]
+                }
+                res_dict["verificationStatus"] = {
+                    "coding": [{"system": "http://terminology.hl7.org/CodeSystem/condition-ver-status", "code": "confirmed"}]
+                }
+                res_dict["category"] = [
+                    {
+                        "coding": [{
+                            "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                            "code": "encounter-diagnosis",
+                            "display": "Encounter Diagnosis"
+                        }]
+                    }
+                ]
+                res_dict["recordedDate"] = now_str
+                res_dict["onsetDateTime"] = now_str
+                if "code" in res_dict:
+                    clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
+
+            elif res_type == "MedicationRequest":
+                res_dict["meta"] = {
+                    "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-medicationrequest"]
+                }
+                res_dict["status"] = "active"
+                res_dict["intent"] = "order"
+                res_dict["category"] = [
+                    {
+                        "coding": [{
+                            "system": "http://terminology.hl7.org/CodeSystem/medicationrequest-category",
+                            "code": "community",
+                            "display": "Community"
+                        }],
+                        "text": "Community"
+                    }
+                ]
+                res_dict["authoredOn"] = now_str
+                if "medicationCodeableConcept" in res_dict:
+                    clean_codeable_concept(res_dict["medicationCodeableConcept"], "http://www.nlm.nih.gov/research/umls/rxnorm")
+
+            elif res_type == "Observation":
+                res_dict["meta"] = {
+                    "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-observation-lab"]
+                }
+                res_dict["status"] = "final"
+                res_dict["category"] = [
+                    {
+                        "coding": [{
+                            "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                            "code": "laboratory",
+                            "display": "Laboratory"
+                        }]
+                    }
+                ]
+                res_dict["effectiveDateTime"] = now_str
+                res_dict["issued"] = now_str
+                if "code" in res_dict:
+                    clean_codeable_concept(res_dict["code"], "http://loinc.org")
+                obs_display = res_dict.get("code", {}).get("text", "Laboratory Observation")
+                obs_references.append({
+                    "reference": f"urn:uuid:{res_id}",
+                    "display": obs_display
+                })
+
+            elif res_type == "Procedure":
+                res_dict["meta"] = {
+                    "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-procedure"]
+                }
+                res_dict["status"] = "completed"
+                res_dict["performedDateTime"] = now_str
+                if "code" in res_dict:
+                    clean_codeable_concept(res_dict["code"], "http://snomed.info/sct")
+
+            standard_entries.append({
+                "fullUrl": f"urn:uuid:{res_id}",
+                "resource": res_dict,
+                "request": {"method": "POST", "url": res_type}
+            })
+
+        # 建立符合 Synthea 格式的 DiagnosticReport（包含關聯 Observation 與 LAB 類別）
+        diag_id = str(uuid4())
+        diag_report = {
+            "resourceType": "DiagnosticReport",
+            "id": diag_id,
+            "meta": {
+                "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-diagnosticreport-lab"]
+            },
+            "status": "final",
+            "category": [
+                {
+                    "coding": [
+                        {
+                            "system": "http://terminology.hl7.org/CodeSystem/v2-0074",
+                            "code": "LAB",
+                            "display": "Laboratory"
+                        }
+                    ]
+                }
+            ],
+            "code": {
+                "coding": [
+                    {
+                        "system": "http://loinc.org",
+                        "code": "96381-9",
+                        "display": "Metagenomic next-generation sequencing analysis"
+                    }
+                ],
+                "text": "Metagenomic Next-Generation Sequencing Analysis Report"
+            },
+            "subject": {
+                "reference": f"Patient/{patient_id}"
+            },
+            "effectiveDateTime": now_str,
+            "issued": now_str,
+            "conclusion": "Metagenomic NGS clinical analysis processed via SMART Text2FHIR (Synthea US Core R4 format).",
+            "result": obs_references
+        }
+        standard_entries.insert(0, {
+            "fullUrl": f"urn:uuid:{diag_id}",
+            "resource": diag_report,
+            "request": {"method": "POST", "url": "DiagnosticReport"}
+        })
+
+        # 建立符合 Synthea 格式的 DocumentReference (Clinical Note)，完整記錄分析文本
+        doc_id = str(uuid4())
+        doc_ref = {
+            "resourceType": "DocumentReference",
+            "id": doc_id,
+            "meta": {
+                "profile": ["http://hl7.org/fhir/us/core/StructureDefinition/us-core-documentreference"]
+            },
+            "status": "current",
+            "category": [
+                {
+                    "coding": [
+                        {
+                            "system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                            "code": "clinical-note",
+                            "display": "Clinical Note"
+                        }
+                    ]
+                }
+            ],
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://loinc.org",
+                        "code": "11502-2",
+                        "display": "Laboratory report"
+                    }
+                ],
+                "text": "Metagenomic Clinical Analysis Report"
+            },
+            "subject": {
+                "reference": f"Patient/{patient_id}"
+            },
+            "date": now_str,
+            "content": [
+                {
+                    "attachment": {
+                        "contentType": "text/markdown; charset=utf-8",
+                        "data": base64.b64encode(report_markdown.encode("utf-8")).decode("utf-8"),
+                        "title": "Metagenomic Clinical Analysis Report"
+                    }
+                }
+            ]
+        }
+        standard_entries.append({
+            "fullUrl": f"urn:uuid:{doc_id}",
+            "resource": doc_ref,
+            "request": {"method": "POST", "url": "DocumentReference"}
+        })
+
         raw_bundle = {
             "resourceType": "Bundle",
             "type": "transaction",
