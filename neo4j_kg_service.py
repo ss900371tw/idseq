@@ -6,7 +6,7 @@ Neo4j 集中式醫學與基因體知識圖譜服務 (Centralized Neo4j Medical &
 1. MetagenomicKG: 微生物病原體、分類階層、感染表型與抗微生物治療
 2. CARD (ARO): 抗藥性基因、抗藥生化機轉與抗生素家族
 3. BV-BRC: 病毒與細菌基因體學、演化譜系 (Lineages)、蛋白結構與受體網絡
-4. PrimeKG: 精準醫學疾病分類 (MONDO)、臨床表型 (HPO)、適應症與用藥禁忌 (Contraindications)
+4. OptimusKG: 精準醫學疾病分類 (MONDO)、臨床表型 (HPO)、適應症與用藥禁忌 (Contraindications)
 """
 
 import os
@@ -203,9 +203,9 @@ def query_consensus_genome_kg(session, term: str) -> List[str]:
         lines.append("")
     return lines
 
-def query_primekg_clinical_kg(session, term: str) -> List[str]:
+def query_optimuskg_clinical_kg(session, term: str) -> List[str]:
     """
-    查詢 PrimeKG 精準醫學圖譜：
+    查詢 OptimusKG 精準醫學圖譜：
     1. 疾病實體 (Disease / MONDO): 關聯臨床表型 (HPO)、常見感染致病原、適應症藥物與關鍵用藥禁忌
     2. 處方用藥實體 (Drug / DrugBank / RxNorm): 藥理機轉、適應疾病、用藥禁忌症、對症表型、已知抗藥基因
     3. 臨床表型實體 (Phenotype / HPO): 表型特徵、相關聯疾病、對症緩解藥物
@@ -238,7 +238,7 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
     res_dis = list(session.run(cypher_disease, term=clean_term))
     for rec in res_dis:
         d_name = rec["disease"]
-        lines.append(f"📌 **PrimeKG 精準醫學疾病實體：{d_name}** (`{rec['mondo_id']}` | SNOMED CT: `{rec['snomed_code']}` | UMLS CUI: `{rec['cui']}`)")
+        lines.append(f"📌 **OptimusKG 精準醫學疾病實體：{d_name}** (`{rec['mondo_id']}` | SNOMED CT: `{rec['snomed_code']}` | UMLS CUI: `{rec['cui']}`)")
         if rec["desc"]:
             lines.append(f"  - **病理機轉與定義**: {rec['desc']}")
         if rec["phenotypes"]:
@@ -278,7 +278,7 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
     res_drug = list(session.run(cypher_drug, term=clean_term))
     for rec in res_drug:
         dr_name = rec["drug"]
-        lines.append(f"📌 **PrimeKG 精準處方藥物實體：{dr_name}** (`{rec['drugbank_id']}` | RxNorm: `{rec['rxnorm_code']}` | 藥物類別: {rec['drug_class']})")
+        lines.append(f"📌 **OptimusKG 精準處方藥物實體：{dr_name}** (`{rec['drugbank_id']}` | RxNorm: `{rec['rxnorm_code']}` | 藥物類別: {rec['drug_class']})")
         if rec["moa"]:
             lines.append(f"  - **藥理生化機轉 (MoA)**: {rec['moa']}")
         if rec["desc"]:
@@ -312,7 +312,7 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
     res_ph = list(session.run(cypher_phenotype, term=clean_term))
     for rec in res_ph:
         ph_name = rec["phenotype"]
-        lines.append(f"📌 **PrimeKG 臨床表型實體：{ph_name}** (`{rec['hpo_id']}`)")
+        lines.append(f"📌 **OptimusKG 臨床表型實體：{ph_name}** (`{rec['hpo_id']}`)")
         if rec["desc"]:
             lines.append(f"  - **臨床表型定義**: {rec['desc']}")
         if rec["associated_diseases"]:
@@ -322,6 +322,8 @@ def query_primekg_clinical_kg(session, term: str) -> List[str]:
         lines.append("")
 
     return lines
+
+query_primekg_clinical_kg = query_optimuskg_clinical_kg
 
 # =========================================================================
 # Streamlit Cloud 離線沙盒展示圖譜備用引擎 (Cloud Sandbox Fallback Engine)
@@ -369,7 +371,7 @@ def retrieve_cloud_sandbox_kg(file_terms: List[str], records_terms: List[str], m
         f"• 圖譜規模: 48 個核心臨床實體節點 | 117 條多跳關係邊",
         f"• 當前分析模組 (Mode): `{mode}`",
         f"• 上傳檔案專屬圖譜: {target_file_kg}",
-        f"• 病患臨床專屬圖譜: PrimeKG (精準醫學: 疾病分類、處方用藥禁忌與臨床表型)",
+        f"• 病患臨床專屬圖譜: OptimusKG (精準醫學: 疾病分類、處方用藥禁忌與臨床表型)",
         f"• 上傳檔案實體 (File Entities): {', '.join(file_terms) if file_terms else '無'}",
         f"• 病患臨床病歷實體 (Patient Entities): {', '.join(records_terms) if records_terms else '無'}\n"
     ]
@@ -417,14 +419,14 @@ def retrieve_cloud_sandbox_kg(file_terms: List[str], records_terms: List[str], m
             if matched_lines:
                 sections.extend(matched_lines)
 
-    # 2. 病患臨床病歷 (PrimeKG)
+    # 2. 病患臨床病歷 (OptimusKG)
     if records_terms:
-        sections.append("### 📋 當前連接病患臨床病歷精準醫學網絡 (PrimeKG Precision Medicine Context)")
+        sections.append("### 📋 當前連接病患臨床病歷精準醫學網絡 (OptimusKG Precision Medicine Context)")
         for term in records_terms:
             clinical_lines = []
             for d in data.get("diseases", []):
                 if _term_match_cloud(term, d["name"], d.get("aliases")):
-                    clinical_lines.append(f"📌 **PrimeKG 精準醫學疾病實體：{d['name']}** (`{d['id']}` | SNOMED CT: `{d.get('snomed_code', '')}` | UMLS CUI: `{d.get('cui', '')}`)")
+                    clinical_lines.append(f"📌 **OptimusKG 精準醫學疾病實體：{d['name']}** (`{d['id']}` | SNOMED CT: `{d.get('snomed_code', '')}` | UMLS CUI: `{d.get('cui', '')}`)")
                     if d.get("desc"): clinical_lines.append(f"  - **病理機轉與定義**: {d['desc']}")
                     if d.get("phenotypes"): clinical_lines.append(f"  - **關聯臨床表型 (HAS_PHENOTYPE)**: {', '.join(d['phenotypes'])}")
                     if d.get("causative_pathogens"): clinical_lines.append(f"  - **常見感染致病原 (CAUSES)**: {', '.join(d['causative_pathogens'])}")
@@ -435,7 +437,7 @@ def retrieve_cloud_sandbox_kg(file_terms: List[str], records_terms: List[str], m
                     clinical_lines.append("")
             for dr in data.get("drugs", []):
                 if _term_match_cloud(term, dr["name"], dr.get("aliases"), dr.get("drug_class")):
-                    clinical_lines.append(f"📌 **PrimeKG 精準處方藥物實體：{dr['name']}** (`{dr['id']}` | RxNorm: `{dr.get('rxnorm_code', '')}` | 藥物類別: {dr.get('drug_class', '')})")
+                    clinical_lines.append(f"📌 **OptimusKG 精準處方藥物實體：{dr['name']}** (`{dr['id']}` | RxNorm: `{dr.get('rxnorm_code', '')}` | 藥物類別: {dr.get('drug_class', '')})")
                     if dr.get("moa"): clinical_lines.append(f"  - **藥理生化機轉 (MoA)**: {dr['moa']}")
                     if dr.get("desc"): clinical_lines.append(f"  - **臨床藥物說明**: {dr['desc']}")
                     if dr.get("indications"): clinical_lines.append(f"  - **適應症疾病 (INDICATED_FOR)**: {', '.join(dr['indications'])}")
@@ -447,7 +449,7 @@ def retrieve_cloud_sandbox_kg(file_terms: List[str], records_terms: List[str], m
                     clinical_lines.append("")
             for ph in data.get("phenotypes", []):
                 if _term_match_cloud(term, ph["name"], ph.get("aliases")):
-                    clinical_lines.append(f"📌 **PrimeKG 臨床表型實體：{ph['name']}** (`{ph['id']}`)")
+                    clinical_lines.append(f"📌 **OptimusKG 臨床表型實體：{ph['name']}** (`{ph['id']}`)")
                     if ph.get("desc"): clinical_lines.append(f"  - **臨床表型定義**: {ph['desc']}")
                     if ph.get("associated_diseases"): clinical_lines.append(f"  - **相關聯重大疾病 (HAS_PHENOTYPE)**: {', '.join(ph['associated_diseases'])}")
                     if ph.get("symptomatic_drugs"): clinical_lines.append(f"  - **對症緩解處方推薦 (TREATS_PHENOTYPE)**: {', '.join(ph['symptomatic_drugs'])}")
@@ -515,11 +517,11 @@ def retrieve_centralized_neo4j_kg(
                         if lines:
                             sections.extend(lines)
 
-            # 2. 針對當前連接病患臨床病歷 (FHIR Clinical Records)：一律且僅專屬對應 PrimeKG
+            # 2. 針對當前連接病患臨床病歷 (FHIR Clinical Records)：一律且僅專屬對應 OptimusKG
             if records_terms:
-                sections.append("### 📋 當前連接病患臨床病歷精準醫學網絡 (PrimeKG Precision Medicine Context)")
+                sections.append("### 📋 當前連接病患臨床病歷精準醫學網絡 (OptimusKG Precision Medicine Context)")
                 for term in records_terms:
-                    clinical_lines = query_primekg_clinical_kg(session, term)
+                    clinical_lines = query_optimuskg_clinical_kg(session, term)
                     if clinical_lines:
                         sections.extend(clinical_lines)
 

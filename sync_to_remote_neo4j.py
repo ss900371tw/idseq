@@ -1,7 +1,7 @@
 """
 Neo4j AuraDB / 遠端集中式知識圖譜一鍵同步工具 (Sync to Remote Neo4j / AuraDB)
 
-支援將本機 PrimeKG、MetagenomicKG、CARD 與 BV-BRC 圖譜資料一鍵同步至：
+支援將本機 OptimusKG、MetagenomicKG、CARD 與 BV-BRC 圖譜資料一鍵同步至：
 1. 官方免費 Neo4j AuraDB (neo4j+s://...databases.neo4j.io) - 供 Streamlit Cloud 使用
 2. 遠端雲端伺服器 (bolt://...:7687)
 3. 本地 Docker 容器 (bolt://localhost:7687)
@@ -109,12 +109,14 @@ def sync_data(uri: str, user: str, password: str):
                  gram_stain=p.get("gram_stain", ""), desc=p.get("desc", ""),
                  aliases=p.get("aliases", []))
 
-        # 3. 匯入 Disease (PrimeKG)
-        logging.info("3. 匯入 PrimeKG 疾病實體節點...")
+        # 3. 匯入 Disease (OptimusKG)
+        logging.info("3. 匯入 OptimusKG 疾病實體節點...")
         for d in kg_data.get("diseases", []):
             session.run("""
             MERGE (dis:Disease {id: $id})
-            SET dis.name = $name,
+            SET dis:OptimusKG,
+                dis.source = 'OptimusKG',
+                dis.name = $name,
                 dis.cui = $cui,
                 dis.snomed_code = $snomed_code,
                 dis.description = $desc,
@@ -123,12 +125,14 @@ def sync_data(uri: str, user: str, password: str):
                  snomed_code=d.get("snomed_code", ""), desc=d.get("desc", ""),
                  aliases=d.get("aliases", []))
 
-        # 4. 匯入 Drug (PrimeKG)
-        logging.info("4. 匯入 PrimeKG 處方藥物實體節點...")
+        # 4. 匯入 Drug (OptimusKG)
+        logging.info("4. 匯入 OptimusKG 處方藥物實體節點...")
         for dr in kg_data.get("drugs", []):
             session.run("""
             MERGE (drug:Drug {id: $id})
-            SET drug.name = $name,
+            SET drug:OptimusKG,
+                drug.source = 'OptimusKG',
+                drug.name = $name,
                 drug.rxnorm_code = $rxnorm_code,
                 drug.drug_class = $drug_class,
                 drug.mechanism_of_action = $moa,
@@ -138,12 +142,14 @@ def sync_data(uri: str, user: str, password: str):
                  drug_class=dr.get("drug_class", ""), moa=dr.get("moa", ""),
                  desc=dr.get("desc", ""), aliases=dr.get("aliases", []))
 
-        # 5. 匯入 Phenotype (PrimeKG)
-        logging.info("5. 匯入 PrimeKG 臨床表型實體節點...")
+        # 5. 匯入 Phenotype (OptimusKG)
+        logging.info("5. 匯入 OptimusKG 臨床表型實體節點...")
         for ph in kg_data.get("phenotypes", []):
             session.run("""
             MERGE (p:Phenotype {id: $id})
-            SET p.name = $name,
+            SET p:OptimusKG,
+                p.source = 'OptimusKG',
+                p.name = $name,
                 p.description = $desc,
                 p.aliases = $aliases
             """, id=ph["id"], name=ph["name"], desc=ph.get("desc", ""),

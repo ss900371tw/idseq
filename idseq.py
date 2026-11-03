@@ -1021,7 +1021,7 @@ except Exception as e:
     chat = None
 
 
-# ✅ 集中式知識圖譜檢索函數 (嚴格領域分立：病患用 PrimeKG，Metagenomics 用 MetagenomicKG，CG 用 BV-BRC，AMR 用 CARD)
+# ✅ 集中式知識圖譜檢索函數 (嚴格領域分立：病患用 OptimusKG，Metagenomics 用 MetagenomicKG，CG 用 BV-BRC，AMR 用 CARD)
 def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: str = None):
     """
     依據分析模組與病患臨床病歷執行精確的領域分立檢索：
@@ -1030,13 +1030,13 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: s
         - Consensus Genome 模組 -> 專屬檢索 BV-BRC (至少 5 個病毒基因組變異與結構關鍵字)
         - Antimicrobial Resistance 模組 -> 專屬檢索 CARD ARO (至少 5 個抗藥基因與耐藥機制關鍵字)
     2. 當前連接病患臨床資訊 (FHIR Clinical Records):
-        - 無論是哪一個模組，病患臨床資訊 (確診疾病、用藥處方、臨床表型) 一律專屬對應 PrimeKG (至少 5 個精準醫學實體關鍵字)
+        - 無論是哪一個模組，病患臨床資訊 (確診疾病、用藥處方、臨床表型) 一律專屬對應 OptimusKG (至少 5 個精準醫學實體關鍵字)
     """
     import re
     from neo4j import GraphDatabase
 
     # 領域候選詞庫 (當動態萃取離線時使用的精準 Heuristic 詞庫)
-    PRIMEKG_PATIENT_CANDIDATES = [
+    OPTIMUSKG_PATIENT_CANDIDATES = [
         "Sepsis", "Severe Sepsis", "Pneumonia", "Bacterial Pneumonia", "Bronchitis", "Acute Bronchitis",
         "Asthma", "Urinary Tract Infection", "UTI", "Urosepsis", "Bacteremia", "Type 2 Diabetes Mellitus", "Diabetes",
         "Vancomycin", "Piperacillin-Tazobactam", "Piperacillin", "Metformin", "Albuterol", "Amoxicillin", "Ciprofloxacin", "Meropenem", "Ibuprofen",
@@ -1070,7 +1070,7 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: s
 
     def extract_keywords_via_gemini(text: str, domain_target: str, min_count: int = 5, max_count: int = 10) -> list:
         """
-        使用 Gemini 2.5 動態針對指定知識圖譜領域（PrimeKG, MetagenomicKG, BV-BRC, CARD）
+        使用 Gemini 2.5 動態針對指定知識圖譜領域（OptimusKG, MetagenomicKG, BV-BRC, CARD）
         精準萃取至少 5 個核心臨床/生物資訊關鍵字（最多 10 個）。
         """
         import json
@@ -1083,8 +1083,8 @@ def retrieve_context(query: str, k: int = 5, file_contents: dict = None, mode: s
             return []
 
         domain_instructions = {
-            "PrimeKG": (
-                "Target Ontology: PrimeKG Precision Medicine Knowledge Graph.\n"
+            "OptimusKG": (
+                "Target Ontology: OptimusKG Precision Medicine Knowledge Graph.\n"
                 f"Focus: Extract at least {min_count} clinical diagnoses/conditions (SNOMED CT/MONDO, e.g., 'Severe Sepsis', 'Pneumonia', 'Diabetes'), "
                 "active prescription medications (RxNorm, e.g., 'Vancomycin', 'Metformin', 'Piperacillin'), and key clinical phenotypes/symptoms (HPO, e.g., 'Fever', 'Lactic Acidosis', 'Dyspnea'). "
                 "STRICT EXCLUSION: Do NOT extract routine normal vitals, common non-specific CBC lab labels (e.g., RBC, WBC count), or administrative text."
@@ -1193,7 +1193,7 @@ Text to analyze:
                     if term not in file_terms: file_terms.append(term)
 
     # B. 當前連接病患臨床資訊 (FHIR Clinical Records: 疾病診斷, 藥物處方, 醫療處置與重大表型)
-    # 專屬萃取至少 5 個關鍵字用 PrimeKG 圖譜連結
+    # 專屬萃取至少 5 個關鍵字用 OptimusKG 圖譜連結
     records_terms = []
     if st.session_state.get("active_patient_demographics"):
         p_id = st.session_state.active_patient_demographics.get("id")
@@ -1208,16 +1208,16 @@ Text to analyze:
             if procedures: clinical_texts.extend(procedures)
                 
             clinical_text = " ".join(clinical_texts)
-            # 專屬針對 PrimeKG 進行智慧萃取 (至少 5 個，最多 10 個)
-            records_terms = extract_keywords_via_gemini(clinical_text, "PrimeKG", min_count=5, max_count=10)
+            # 專屬針對 OptimusKG 進行智慧萃取 (至少 5 個，最多 10 個)
+            records_terms = extract_keywords_via_gemini(clinical_text, "OptimusKG", min_count=5, max_count=10)
             
             clinical_text_lower = clinical_text.lower()
-            for term in PRIMEKG_PATIENT_CANDIDATES:
+            for term in OPTIMUSKG_PATIENT_CANDIDATES:
                 if len(records_terms) >= 10: break
                 if re.search(r'\b' + re.escape(term.lower()) + r'\b', clinical_text_lower) or term.lower() in clinical_text_lower:
                     if term not in records_terms: records_terms.append(term)
             if len(records_terms) < 5:
-                for term in PRIMEKG_PATIENT_CANDIDATES:
+                for term in OPTIMUSKG_PATIENT_CANDIDATES:
                     if len(records_terms) >= 5: break
                     if term not in records_terms: records_terms.append(term)
         except Exception:
@@ -1380,18 +1380,18 @@ TEMPLATE_MAP = {
 
 4. 綜合風險、訊號雜訊與生態意義推論 (Signal-to-Noise & Biological Insights)
    - 結合檢體類型與常見背景雜訊，辨識「真正潛在致病原」與「過客/背景微生物」，評估偽陽性或定植的可能。
-   - ⚠️ 知識圖譜強制深度整合 (Mandatory MetagenomicKG & PrimeKG Integration)：你必須深度整合下方「📚 Textbook Supplementary Knowledge」部分提供的 MetagenomicKG 與 PrimeKG 圖資料庫檢索脈絡（特別是 MetagenomicKG 的微生物病原體與疾病特徵，以及 PrimeKG 提供的精準醫學疾病/表型/基因與藥物的 Live 實證關聯，如 disease_phenotype, disease_protein, indication, contraindication 等）。明確指出檢出微生物在圖譜中的病原體分類與致病機制，並深度探討病患當前臨床診斷與藥理機制的精準醫學關聯，嚴禁直接忽略圖譜背景知識。
+   - ⚠️ 知識圖譜強制深度整合 (Mandatory MetagenomicKG & OptimusKG Integration)：你必須深度整合下方「📚 Textbook Supplementary Knowledge」部分提供的 MetagenomicKG 與 OptimusKG 圖資料庫檢索脈絡（特別是 MetagenomicKG 的微生物病原體與疾病特徵，以及 OptimusKG 提供的精準醫學疾病/表型/基因與藥物的 Live 實證關聯，如 disease_phenotype, disease_protein, indication, contraindication 等）。明確指出檢出微生物在圖譜中的病原體分類與致病機制，並深度探討病患當前臨床診斷與藥理機制的精準醫學關聯，嚴禁直接忽略圖譜背景知識。
 
 5. 結論、臨床治療與後續驗證建議 (Conclusion, Treatment Guidelines & Next Steps)
    - 總結分析亮點，並評估對病人病程與治療反應的影響。
-   - ⚠️ 臨床治療與投藥指引：必須結合 MetagenomicKG 檢索到的推薦藥物與 PrimeKG 提供的精準藥物-疾病/靶點關聯資訊（如 DrugBank 關係、drug_protein、contraindication 禁忌症），針對病患後續的經驗性治療或精準用藥調整，給予具備圖譜科學依據的精準處置與投藥臨床指引建議。
+   - ⚠️ 臨床治療與投藥指引：必須結合 MetagenomicKG 檢索到的推薦藥物與 OptimusKG 提供的精準藥物-疾病/靶點關聯資訊（如 DrugBank 關係、drug_protein、contraindication 禁忌症），針對病患後續的經驗性治療或精準用藥調整，給予具備圖譜科學依據的精準處置與投藥臨床指引建議。
    - 提供後續具體的實驗與臨床驗證建議（例如特定 PCR、傳統微生物培養、Sanger 定序或臨床進一步鑑別方向、Alpha/Beta 多樣性變化與功能基因預測等）。
 
 請確保用詞專業、客觀，嚴格符合 IDSeq / Metagenomics 數據分析標準規範。
 
 注意事項：
 - 請從我上傳的檔案內容中解析數據、行列與數值來撰寫報告。
-- **MetagenomicKG & PrimeKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 MetagenomicKG 病原體-疾病關聯、推薦藥物，以及 PrimeKG 精準醫學疾病、表型、基因與藥物關係）有機融合融入對應的第 4 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
+- **MetagenomicKG & OptimusKG 知識圖譜強制整合**：你必須主動且深入地將「📚 Textbook Supplementary Knowledge」中的圖譜背景知識（如 MetagenomicKG 病原體-疾病關聯、推薦藥物，以及 OptimusKG 精準醫學疾病、表型、基因與藥物關係）有機融合融入對應的第 4 點與第 5 點分析段落中，严禁僅將其作為附錄或簡單條列，而必須融入報告主體的敘事分析與臨床推論中。
 - 報告語氣需專業、客觀，專有名詞請保持正確的生物資訊與微生物學術語。
 - 請禁止任何開場白、客套話、自我介紹或結語，從第一個字開始就是報告本身。
  
@@ -1421,18 +1421,18 @@ TEMPLATE_MAP = {
 以表格呈現參考基因組長度、不同門檻的基因組覆蓋度（如 $\ge 1\times$ 與 $\ge 10\times$ 覆蓋率）、平均定序深度 (Mean Depth)、未定鹼基數 (Ambiguous Bases / Ns 數量與佔比) 以及整體組裝品質評級。
 詳細列出檢出的病原體及其在各樣本中的相對豐度（RPM / rPM）。
 
-4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & BV-BRC/PrimeKG Integration)
+4. 病原體基因組分佈、變異與圖譜知識整合 (Pathogen Profiling, Key Mutations & BV-BRC/OptimusKG Integration)
 說明基因組覆蓋的均勻度、是否出現顯著的訊號斷層，並列出檢測到的關鍵突變位點或標誌性胺基酸取代。
 評估組裝出來的 Consensus Genome 品質（如：N-base 比例、與參考基因體的相似度等）。
 
-⚠️ 微生物基因組與精準醫學圖譜整合 (Mandatory BV-BRC & PrimeKG Integration)：
-深度參考並結合「📚 Textbook Supplementary Knowledge」中由 BV-BRC (Bacterial and Viral Bioinformatics Resource Center) 實時檢索拉回的微生物基因組特徵、Pangolin 演化譜系、蛋白結構、毒力因子及宿主交互網絡，以及 PrimeKG 提供的病患精準醫學臨床病歷與對症藥理網絡（MONDO 疾病分類、臨床表型 HPO 關聯、退燒對症用藥如 Ibuprofen 靶點與通路等），探討其在該名病患體內的潛在臨床危害與宿主微觀機制（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
+⚠️ 微生物基因組與精準醫學圖譜整合 (Mandatory BV-BRC & OptimusKG Integration)：
+深度參考並結合「📚 Textbook Supplementary Knowledge」中由 BV-BRC (Bacterial and Viral Bioinformatics Resource Center) 實時檢索拉回的微生物基因組特徵、Pangolin 演化譜系、蛋白結構、毒力因子及宿主交互網絡，以及 OptimusKG 提供的病患精準醫學臨床病歷與對症藥理網絡（MONDO 疾病分類、臨床表型 HPO 關聯、退燒對症用藥如 Ibuprofen 靶點與通路等），探討其在該名病患體內的潛在臨床危害與宿主微觀機制（須將背景知識有機融入主體敘事，嚴禁僅作條列式附錄）。
 
 5. 系統發生、公衛與臨床解讀建議 (Phylogenetic, Public Health & Clinical Interpretation)
 針對該病毒的覆蓋完整性（是否適合上傳 GISAID/GenBank 或進行進一步的演化樹分析）以及譜系分型結果提供專業解讀。
 綜合評估定序結果的可靠度，並針對該病人的病程追蹤、後續實驗驗證（如 RT-qPCR、Sanger 定序）提出建議。
 
-⚠️ 臨床干預與精準投藥建議：綜合 BV-BRC 提供的病毒結構與譜系抗性特徵以及 PrimeKG 提供的精準對症藥理（退燒藥物、適應症 indication、禁忌症 contraindication 藥理網絡與 drug_protein 靶點通路），為臨床醫師針對該特定病毒突變株引起的上呼吸道感染與併發症（如中耳炎）之治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置與投藥方案。
+⚠️ 臨床干預與精準投藥建議：綜合 BV-BRC 提供的病毒結構與譜系抗性特徵以及 OptimusKG 提供的精準對症藥理（退燒藥物、適應症 indication、禁忌症 contraindication 藥理網絡與 drug_protein 靶點通路），為臨床醫師針對該特定病毒突變株引起的上呼吸道感染與併發症（如中耳炎）之治療干預、給藥選擇與防範措施上，提供具備圖譜科學依據的精準處置與投藥方案。
 
 ⚠️ 執行注意事項：
 請從上傳的檔案內容中解析數據、行列與數值來撰寫報告。
@@ -1444,7 +1444,7 @@ TEMPLATE_MAP = {
 {csv_content}
 """,
 "Antimicrobial Resistance": """
-你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）抗性基因檢測（AMR）與臨床抗菌藥物管理（Antimicrobial Stewardship）的專家。請根據我上傳的三個檔案（包含 sample_metadata.csv、病原體檢測報表、以及基於 CZ ID / IDSeq 與 CARD / ResFinder 資料庫的抗藥性基因檢測報表），並結合後續提供的「📚 Textbook Supplementary Knowledge (CARD & PrimeKG 知識圖譜)」，為我撰寫一份結構完整、專業且利於臨床醫師調整抗生素治療策略的 AMR 臨床觀察與洞察報告。
+你是一位精通生物資訊學（Bioinformatics）、次世代定序（mNGS）抗性基因檢測（AMR）與臨床抗菌藥物管理（Antimicrobial Stewardship）的專家。請根據我上傳的三個檔案（包含 sample_metadata.csv、病原體檢測報表、以及基於 CZ ID / IDSeq 與 CARD / ResFinder 資料庫的抗藥性基因檢測報表），並結合後續提供的「📚 Textbook Supplementary Knowledge (CARD & OptimusKG 知識圖譜)」，為我撰寫一份結構完整、專業且利於臨床醫師調整抗生素治療策略的 AMR 臨床觀察與洞察報告。
 📌 重要背景說明：
 本分析的所有檢體皆來自「同一位病人」（涵蓋治療前後不同時期，或不同採檢部位）。報告必須探討病原體與抗藥性基因在該病人治療過程中的動態變化，以及不同部位間抗藥性特徵的差異。
 【寫作與格式嚴格規範】
@@ -1466,15 +1466,15 @@ TEMPLATE_MAP = {
 3. Antimicrobial Resistance Profile & Pathogen Association (抗藥性基因圖譜與病原體關聯分析)
 
 基因與病原體對照：整理不同時間點/部位偵測到的抗性基因，詳細列出檢出抗性基因名稱 (Gene Symbol)、對應抗生素家族 (Drug Class)、基因覆蓋度 (Coverage) 與讀段支援數 (Reads Mapping)。並結合物種豐度，追蹤這些基因最可能來自哪一種檢出的致病細菌，標示預期表型耐藥特徵。
-⚠️ CARD 抗藥機制與 PrimeKG 臨床用藥深度整合 (Mandatory CARD & PrimeKG Integration)：必須深度結合 CARD 知識圖譜提供的 ARO 抗藥本體、抗性基因機制 (如 antibiotic efflux, inactivation) 與 PrimeKG 關於患者基礎疾病、臨床表型 HPO、以及臨床用藥 (如 Beta-lactams, Vancomycin 靶點 drug_protein 關聯、禁忌症) 的精準醫學資訊。對比分析目前檢出的抗藥基因與引發的潛在臨床風險。
+⚠️ CARD 抗藥機制與 OptimusKG 臨床用藥深度整合 (Mandatory CARD & OptimusKG Integration)：必須深度結合 CARD 知識圖譜提供的 ARO 抗藥本體、抗性基因機制 (如 antibiotic efflux, inactivation) 與 OptimusKG 關於患者基礎疾病、臨床表型 HPO、以及臨床用藥 (如 Beta-lactams, Vancomycin 靶點 drug_protein 關聯、禁忌症) 的精準醫學資訊。對比分析目前檢出的抗藥基因與引發的潛在臨床風險。
 4. Comprehensive Clinical Risk Assessment (綜合臨床風險評估)
 
 綜合病原體與抗藥性基因的動態變化，評估該病人體內抗藥性突變、抗藥菌株在治療壓力下的演變或清除/篩選風險（如高風險 ESBL、多重抗藥性等）。
-⚠️ 圖譜病原致病與 PrimeKG 臨床風險整合：必須將 CARD 檢出的 ARO 抗性突變與病原體臨床風險，結合 PrimeKG 中關於該患者本身基礎疾病與 HPO 臨床表型的關聯資訊，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
+⚠️ 圖譜病原致病與 OptimusKG 臨床風險整合：必須將 CARD 檢出的 ARO 抗性突變與病原體臨床風險，結合 OptimusKG 中關於該患者本身基礎疾病與 HPO 臨床表型的關聯資訊，深度融合進本段風險評估中，以利臨床醫師研判該耐藥株對病患造成的綜合生命威脅。
 5. AMR Stewardship & Treatment Recommendations (抗菌藥物管理與臨床處置建議)
 
 針對檢出的關鍵抗藥特徵，指出哪些經驗性抗生素可能面臨治療失敗，必須避免使用；並提供院內感染管控或接觸隔離的警示建議。
-⚠️ 替代藥物與臨床實證用藥指引：必須結合 CARD 抗藥機制與 PrimeKG 中所建議之有效/推薦藥物及相關靶點通路 (indication, drug_protein) 臨床細節，提出具臨床實證依據的抗生素療程調整、優先考慮的替代治療方案（如碳青黴烯類或新型複合製劑）或合併用藥方案，並給出後續實驗驗證的建議。
+⚠️ 替代藥物與臨床實證用藥指引：必須結合 CARD 抗藥機制與 OptimusKG 中所建議之有效/推薦藥物及相關靶點通路 (indication, drug_protein) 臨床細節，提出具臨床實證依據的抗生素療程調整、優先考慮的替代治療方案（如碳青黴烯類或新型複合製劑）或合併用藥方案，並給出後續實驗驗證的建議。
  
 原始 CSV 摘要：
 {csv_content}
@@ -1982,7 +1982,7 @@ def main():
                 f"   - 請至 [Neo4j AuraDB 官網](https://neo4j.com/cloud/platform/aura-graph-database/) 建立免費雲端資料庫實例（永久免費）。\n"
                 f"   - 將取得之 `neo4j+s://...` 網址與密碼填入上方欄位（或於 Streamlit Cloud Settings -> Secrets 中設定 `NEO4J_URI` 與 `NEO4J_PASSWORD`）。\n"
                 f"   - 可於本機執行 `python3 sync_to_remote_neo4j.py --uri neo4j+s://... --password ...` 一鍵匯入全部圖譜數據！\n"
-                f"3. **雲端演示保障**：目前系統已自動切換至「內建沙盒圖譜」，報告仍具備 100% 完整 PrimeKG 決策支援。"
+                f"3. **雲端演示保障**：目前系統已自動切換至「內建沙盒圖譜」，報告仍具備 100% 完整 OptimusKG 決策支援。"
             )
 
     # ---------- 主介面：病患臨床卡片 / 感控提示卡片 ----------
@@ -2207,9 +2207,9 @@ def main():
         if st.session_state.get("gemini_analysis_result"):
             st.subheader("📄 分析結果")
 
-            # 顯示 MetagenomicKG & PrimeKG 實時檢索脈絡
+            # 顯示 MetagenomicKG & OptimusKG 實時檢索脈絡
             if st.session_state.get("kg_context_retrieved"):
-                with st.expander("🌐 混合知識圖譜 (PrimeKG & MetagenomicKG & BV-BRC & CARD) 實時檢索證據 (Live Graph Evidence)", expanded=True):
+                with st.expander("🌐 混合知識圖譜 (OptimusKG & MetagenomicKG & BV-BRC & CARD) 實時檢索證據 (Live Graph Evidence)", expanded=True):
                     st.markdown(st.session_state.kg_context_retrieved)
 
             import textwrap
